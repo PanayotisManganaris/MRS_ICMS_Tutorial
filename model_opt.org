@@ -1,0 +1,267 @@
+#+TITLE: Optimizing Models along multiple standard and custom metrics
+* COMMENT dependencies
+#+begin_src jupyter-python :session sm :kernel aikit :exports results :results raw drawer
+  import sqlite3
+  import pandas as pd
+  import numpy as np
+  # featurization
+  from cmcl.data.frame import *
+  from cmcl.features.categories import Categories
+  ## accelerated ml pipeline ##
+  from sklearn.intelex import patch_sklearn
+  patch_sklearn()
+  # feature engineering
+  from sklearn.impute import SimpleImputer
+  from sklearn.preprocessing import Normalizer, StandardScaler
+  from sklearn.compose import TransformedTargetRegressor as ytRegressor
+  # predictors
+  from sklearn.ensemble import RandomForestRegressor
+  from sklearn.gaussian_process import GaussianProcessRegressor
+  from sklearn.gaussian_process.kernels import DotProduct, WhiteKernel, RBF, Matern, RationalQuadratic, ExpSineSquared, ConstantKernel
+  from sklearn.ensemble import GradientBoostingRegressor
+  ## pipeline workflow
+  from sklearn.pipeline import make_pipeline as mkpipe
+  from sklearn.model_selection import train_test_split as tts
+  from sklearn.model_selection import GridSearchCV as gsCV
+  # model eval
+  from sklearn.metrics import make_scorer, mean_squared_error, r2_score, explained_variance_score, max_error
+  #visualization
+  import matplotlib.pyplot as plt
+  from sklearn import set_config
+#+end_src
+
+  #+RESULTS:
+  :RESULTS:
+  # [goto error]
+  : [0;31m---------------------------------------------------------------------------[0m
+  : [0;31mModuleNotFoundError[0m                       Traceback (most recent call last)
+  : Input [0;32mIn [3][0m, in [0;36m<cell line: 8>[0;34m()[0m
+  : [1;32m      6[0m [38;5;28;01mfrom[39;00m [38;5;21;01mcmcl[39;00m[38;5;21;01m.[39;00m[38;5;21;01mfeatures[39;00m[38;5;21;01m.[39;00m[38;5;21;01mcategories[39;00m [38;5;28;01mimport[39;00m Categories
+  : [1;32m      7[0m [38;5;66;03m## accelerated ml pipeline ##[39;00m
+  : [0;32m----> 8[0m [38;5;28;01mfrom[39;00m [38;5;21;01msklearn[39;00m[38;5;21;01m.[39;00m[38;5;21;01mintelex[39;00m [38;5;28;01mimport[39;00m patch_sklearn
+  : [1;32m      9[0m patch_sklearn()
+  : [1;32m     10[0m [38;5;66;03m# feature engineering[39;00m
+  : 
+  : [0;31mModuleNotFoundError[0m: No module named 'sklearn.intelex'
+  :END:
+* TODO COMMENT group-aware scorer
+- [ ] make sklearn compliant, discrete-by-label, scoring class. Initially, focus on assessing regressions for alloy mix subsets... somehow
+- [ ] build towards multi-fidelity learning
+- sklearn compliant WHAT???? I can't remember (in cmcl? or yogi?)
+* COMMENT load data
+#+begin_src jupyter-python :session sm :kernel aikit :exports results :results raw drawer
+  sqlbase = """SELECT *
+              FROM mannodi_base"""
+  sqlref = """SELECT *
+              FROM mannodi_ref_elprop"""
+  sqlalmora = """SELECT *
+                 FROM almora_agg"""
+  with sqlite3.connect("/home/panos/src/cmcl/cmcl/db/perovskites.db") as conn:
+      df = pd.read_sql(sqlbase, conn, index_col="index")
+      lookup = pd.read_sql(sqlref, conn, index_col='index')
+      almora = pd.read_sql(sqlalmora, conn, index_col='index')
+#+end_src
+
+#+RESULTS:
+
+* COMMENT Clean Data
+#+begin_src jupyter-python :session sm :kernel aikit :exports results :results raw drawer
+  lookup = lookup.set_index("Formula")
+  df = df.set_index(["Formula", "sim_cell"], append=True)
+#+end_src
+
+  #+RESULTS:
+
+** manual subset index + subset constituents
+- drop formula with large lattice parameter difference between HSE and PBE (calculation to be rerun)
+- large structural deformation identified by observing cubicity metric -- well outside of 5-10% spec?
+#+begin_src jupyter-python :session sm :kernel aikit :exports results :results raw drawer
+  df = df.drop(index=["Rb0.375Cs0.625GeBr3", "RbGeBr1.125Cl1.875", "K0.75Cs0.25GeI3", "K8Sn8I9Cl15"], level=1)
+  maincomp = df.ft.comp().iloc[:, :14:]
+  empcomp = df.ft.comp().loc[:, ["FA", "MA", "Cs", "Pb", "Sn", "I", "Br", "Cl"]]
+#+end_src
+
+#+RESULTS:
+
+** generate and track mix categories
+#+begin_src jupyter-python :session sm :kernel aikit :exports results :results raw drawer
+  mixlog = maincomp.collect.abx().groupby(level=0, axis=1).count()
+  mix = mixlog.pipe(Categories.logif, condition=lambda x: x>1, default="pure")
+  df = df.assign(mixing=mix).set_index("mixing", append=True)
+  maincomp = maincomp.assign(mixing=mix).set_index("mixing", append=True)
+  empcomp = empcomp.assign(mixing=mix).set_index("mixing", append=True)    
+#+end_src
+
+#+RESULTS:
+
+** auto subset index
+#+begin_src jupyter-python :session sm :kernel aikit :exports results :results raw drawer
+  size = df.index.isin(["2x2x2"], level="sim_cell")
+  #maincomp
+  maincomp = maincomp.collect.abx()
+  mcg = maincomp.groupby(level=0, axis=1).sum()
+  mvB, mvX, mvA, = mcg.A.isin([1, 8]), mcg.B.isin([1, 8]), mcg.X.isin([3, 24])
+  #emcomp
+  empcomp = empcomp.collect.abx()
+  ecg = empcomp.groupby(level=0, axis=1).sum()
+  evB, evX, evA, = ecg.A.isin([1, 8]), ecg.B.isin([1, 8]), ecg.X.isin([3, 24])
+  #subset indexes
+  mfocus = size*mvB*mvA*mvX
+  efocus = size*evB*evA*evX
+#+end_src
+
+#+RESULTS:
+
+** apply subsets
+#+begin_src jupyter-python :session sm :kernel aikit :exports results :results raw drawer
+  maincomp = maincomp[mfocus]
+  empcomp = empcomp[efocus]
+  mys = df[mfocus]
+  eys = df[efocus] #only 56 compounds
+#+end_src
+
+#+RESULTS:
+
+* Composition Models
+** Optimal Model on Composition                                    :B_frame:
+:PROPERTIES:
+:BEAMER_env: frame
+:END:
+*** COMMENT construct pipeline + create test/train splits
+Normalize each sampled composition prior to regression
+#+begin_src jupyter-python :session sm :kernel aikit :exports results :results raw drawer
+  fillna = SimpleImputer(strategy="constant", fill_value=0.0)
+  cpipeRFR = mkpipe(fillna, Normalizer(), RandomForestRegressor())
+  cpipeGPR = mkpipe(fillna, Normalizer(), GaussianProcessRegressor())
+  cpipeGBR = mkpipe(fillna, Normalizer(), GradientBoostingRegressor())
+  mc_tr, mc_ts, my_tr, my_ts = tts(maincomp, mys,
+                                   train_size=0.8, random_state=0)
+  ec_tr, ec_ts, ey_tr, ey_ts = tts(empcomp, eys,
+                                   train_size=0.8, random_state=0)
+#+end_src
+
+#+RESULTS:
+
+*** COMMENT construct Hyper-parameter Spaces
+**** RFR params
+#+begin_src jupyter-python :session sm :kernel aikit :exports results :results raw drawer
+  #"max_depth": [10, 20, 40],
+  #"min_samples_split": [2, 5, 10]
+  RFRgrid = [
+      {'normalizer__norm': ['l1', 'l2', 'max'],
+       'randomforestregressor__bootstrap': [True], #build each tree from sample
+       'randomforestregressor__ccp_alpha': [0.0, 0.5, 1.0], #cost-complexity pruning
+       'randomforestregressor__criterion': ['mse'], #['squared_error', 'poisson'], update sklearn and try these
+       'randomforestregressor__max_depth': [None], #investigate dept of constituent trees, limit
+       'randomforestregressor__max_features': ['auto', 'sqrt', 3], #split after considering
+       'randomforestregressor__max_leaf_nodes': [None], #investigate nodularity of trees
+       'randomforestregressor__max_samples': [0.9, 0.6, 0.3], #frac to bag
+       'randomforestregressor__min_impurity_decrease': [0.0],
+       'randomforestregressor__min_impurity_split': [None],
+       'randomforestregressor__min_samples_leaf': [1], #just sensible
+       'randomforestregressor__min_samples_split': [2], #
+       'randomforestregressor__min_weight_fraction_leaf': [0.0], #
+       'randomforestregressor__n_estimators': [20, 50, 100],
+       'randomforestregressor__n_jobs': [4], #parallelize exec
+       'randomforestregressor__oob_score': [True], #use out-of-bag samples to validate (faster)
+       'randomforestregressor__random_state': [None],
+       'randomforestregressor__verbose': [0], 
+       'randomforestregressor__warm_start': [False] #make a new forest every time (honest)
+       },
+      {'normalizer__norm': ['l1', 'l2', 'max'],
+       'randomforestregressor__bootstrap': [False], #Build each tree from everything
+       'randomforestregressor__ccp_alpha': [0.0, 0.5, 1.0], #cost-complexity pruning
+       'randomforestregressor__criterion': ['mse'], #['squared_error', 'poisson'],
+       'randomforestregressor__max_depth': [None], #investigate dept of constituent trees, limit
+       'randomforestregressor__max_features': ['auto', 'sqrt', 3], #split after considering
+       'randomforestregressor__max_leaf_nodes': [None], #investigate nodularity of trees
+       'randomforestregressor__max_samples': [None], #"bag" everything
+       'randomforestregressor__min_impurity_decrease': [0.0],
+       'randomforestregressor__min_impurity_split': [None],
+       'randomforestregressor__min_samples_leaf': [1], #just sensible
+       'randomforestregressor__min_samples_split': [2], #
+       'randomforestregressor__min_weight_fraction_leaf': [0.0], #
+       'randomforestregressor__n_estimators': [20, 50, 100],
+       'randomforestregressor__n_jobs': [4], #parallelize exec
+       #oob score not available
+       'randomforestregressor__random_state': [None],
+       'randomforestregressor__verbose': [0], 
+       'randomforestregressor__warm_start': [False] #make a new forest every time (honest)
+       }
+  ]
+#+end_src
+
+#+RESULTS:
+
+**** GPR params
+#+begin_src jupyter-python :session sm :kernel aikit :exports results :results raw drawer
+  
+#+end_src
+**** GBR params
+#+begin_src jupyter-python :session sm :kernel aikit :exports results :results raw drawer
+
+#+end_src
+** Do Cross-Validated Regressions, meter performance, get best model
+:PROPERTIES:
+:ID:       38022a45-6806-48c1-9fa6-25eabf75ac87
+:END:
+#+begin_src jupyter-python :session sm :kernel aikit :exports results :results raw drawer :async yes
+  RFRscoring = {'r2': make_scorer(r2_score),
+                'ev': make_scorer(explained_variance_score),
+                'maxerr': make_scorer(max_error, greater_is_better=False),}
+                #'mse': make_scorer(mean_squared_error, greater_is_better=False, squared=False)}
+  rfr = gsCV(cpipeRFR, param_grid=RFRgrid,
+             cv=3, verbose=1, scoring=RFRscoring, refit="r2", return_train_score=True)
+  rfr.fit(ec_tr, ey_tr.PBE_bg_eV)
+#+end_src
+
+* COMMENT compute property descriptors
+** create relational table
+#+begin_src jupyter-python :session sm :kernel aikit :exports results :results raw drawer
+  mrel = maincomp.reset_index().melt(id_vars=maincomp.index.names).dropna(axis=0, subset="value")
+  mrel = mrel.set_index(maincomp.index.names, append=False)
+  erel = empcomp.reset_index().melt(id_vars=empcomp.index.names).dropna(axis=0, subset="value")
+  erel = erel.set_index(empcomp.index.names, append=False)
+#+end_src
+
+#+RESULTS:
+
+** perform main join
+#+begin_src jupyter-python :session sm :kernel aikit :exports results :results raw drawer
+  join = pd.merge(left=mrel, right=lookup, left_on="element", right_on="Formula")
+  join = join.set_index(mrel.index)
+  mainprop = join.groupby("site").apply(
+      lambda df: df.groupby(level="Formula").apply(
+          lambda df: pd.DataFrame(np.average(
+              a=df.select_dtypes(include=np.number), axis=0, weights=df.value),
+                                  index=df.select_dtypes(include=np.number).columns)))
+  mainprop = mainprop.unstack(level="site").unstack(level=1)
+  mainprop.columns=mainprop.columns.droplevel([0])
+  mainprop = mainprop.drop(columns="value", level=1)
+  mainprop = mainprop.reindex(index = maincomp.index.get_level_values("Formula"))
+  mainprop.index=maincomp.index
+#+end_src
+
+#+RESULTS:
+
+** get empprop from mainprop
+#+begin_src jupyter-python :session sm :kernel aikit :exports results :results raw drawer
+  empprop = mainprop.reindex(index=empcomp.index)
+#+end_src
+
+#+RESULTS:
+* Site-Averaged Properties Models
+** Optimal Model on Properties                                     :B_frame:
+:PROPERTIES:
+:BEAMER_env: frame
+:END:
+StandardScale each prop feature prior to regression
+#+begin_src jupyter-python :session sm :kernel aikit :exports results :results raw drawer
+ppipe = mkpipe(StandardScaler(), RandomForestRegressor())
+
+X_train, X_test, y_train, y_test = train_test_split(maincomp, mys, test_size=0.2, random_state=0)
+
+clf.fit(X_train, y_train)
+print("model score: %.3f" % clf.score(X_test, y_test))
+  cpipe = 
+#+end_src
