@@ -1,24 +1,44 @@
-#+TITLE: Optimizing Models along multiple standard and custom metrics
-* COMMENT dependencies
-#+begin_src jupyter-python :session sm :kernel aikit :exports results :results raw drawer
-  import sqlite3
-  import pandas as pd
-  import numpy as np
+#+TITLE: Optimizing RFR Model across multiple metrics
+#+PROPERTY: header-args :session /home/panos/.local/share/jupyter/runtime/kernel-a766a0e8-5d5a-4e4c-9776-1ac1bc34602b.json
+* dependencies
+#+begin_src jupyter-python :exports results :results raw drawer
+  %load_ext autoreload
+  %autoreload 2
+#+end_src
+
+  #+RESULTS:
+  
+#+begin_src jupyter-python :exports results :results raw drawer
+  import sys
+  sys.path.append("/home/panos/src/cmcl")
+  sys.path.append("/home/panos/src/yogi")
   # featurization
   from cmcl.data.frame import *
   from cmcl.features.categories import Categories
+  from yogi.model_selection.butler import summarize_HPO, collect_top_rankings
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python :exports results :results raw drawer
   ## accelerated ml pipeline ##
-  from sklearn.intelex import patch_sklearn
+  from sklearnex import patch_sklearn
   patch_sklearn()
+#+end_src
+
+  #+RESULTS:
+  : Intel(R) Extension for Scikit-learn* enabled (https://github.com/intel/scikit-learn-intelex)
+  
+#+begin_src jupyter-python :exports results :results raw drawer
+  # data tools
+  import sqlite3
+  import pandas as pd
+  import numpy as np
   # feature engineering
   from sklearn.impute import SimpleImputer
-  from sklearn.preprocessing import Normalizer, StandardScaler
-  from sklearn.compose import TransformedTargetRegressor as ytRegressor
+  from sklearn.preprocessing import Normalizer
   # predictors
   from sklearn.ensemble import RandomForestRegressor
-  from sklearn.gaussian_process import GaussianProcessRegressor
-  from sklearn.gaussian_process.kernels import DotProduct, WhiteKernel, RBF, Matern, RationalQuadratic, ExpSineSquared, ConstantKernel
-  from sklearn.ensemble import GradientBoostingRegressor
   ## pipeline workflow
   from sklearn.pipeline import make_pipeline as mkpipe
   from sklearn.model_selection import train_test_split as tts
@@ -31,25 +51,11 @@
 #+end_src
 
   #+RESULTS:
-  :RESULTS:
-  # [goto error]
-  : [0;31m---------------------------------------------------------------------------[0m
-  : [0;31mModuleNotFoundError[0m                       Traceback (most recent call last)
-  : Input [0;32mIn [3][0m, in [0;36m<cell line: 8>[0;34m()[0m
-  : [1;32m      6[0m [38;5;28;01mfrom[39;00m [38;5;21;01mcmcl[39;00m[38;5;21;01m.[39;00m[38;5;21;01mfeatures[39;00m[38;5;21;01m.[39;00m[38;5;21;01mcategories[39;00m [38;5;28;01mimport[39;00m Categories
-  : [1;32m      7[0m [38;5;66;03m## accelerated ml pipeline ##[39;00m
-  : [0;32m----> 8[0m [38;5;28;01mfrom[39;00m [38;5;21;01msklearn[39;00m[38;5;21;01m.[39;00m[38;5;21;01mintelex[39;00m [38;5;28;01mimport[39;00m patch_sklearn
-  : [1;32m      9[0m patch_sklearn()
-  : [1;32m     10[0m [38;5;66;03m# feature engineering[39;00m
-  : 
-  : [0;31mModuleNotFoundError[0m: No module named 'sklearn.intelex'
-  :END:
-* TODO COMMENT group-aware scorer
+* TODO group-aware scorer
 - [ ] make sklearn compliant, discrete-by-label, scoring class. Initially, focus on assessing regressions for alloy mix subsets... somehow
 - [ ] build towards multi-fidelity learning
-- sklearn compliant WHAT???? I can't remember (in cmcl? or yogi?)
-* COMMENT load data
-#+begin_src jupyter-python :session sm :kernel aikit :exports results :results raw drawer
+* load data
+#+begin_src jupyter-python :exports results :results raw drawer
   sqlbase = """SELECT *
               FROM mannodi_base"""
   sqlref = """SELECT *
@@ -64,8 +70,8 @@
 
 #+RESULTS:
 
-* COMMENT Clean Data
-#+begin_src jupyter-python :session sm :kernel aikit :exports results :results raw drawer
+* Clean Data
+#+begin_src jupyter-python :exports results :results raw drawer
   lookup = lookup.set_index("Formula")
   df = df.set_index(["Formula", "sim_cell"], append=True)
 #+end_src
@@ -75,7 +81,7 @@
 ** manual subset index + subset constituents
 - drop formula with large lattice parameter difference between HSE and PBE (calculation to be rerun)
 - large structural deformation identified by observing cubicity metric -- well outside of 5-10% spec?
-#+begin_src jupyter-python :session sm :kernel aikit :exports results :results raw drawer
+#+begin_src jupyter-python :exports results :results raw drawer
   df = df.drop(index=["Rb0.375Cs0.625GeBr3", "RbGeBr1.125Cl1.875", "K0.75Cs0.25GeI3", "K8Sn8I9Cl15"], level=1)
   maincomp = df.ft.comp().iloc[:, :14:]
   empcomp = df.ft.comp().loc[:, ["FA", "MA", "Cs", "Pb", "Sn", "I", "Br", "Cl"]]
@@ -84,7 +90,7 @@
 #+RESULTS:
 
 ** generate and track mix categories
-#+begin_src jupyter-python :session sm :kernel aikit :exports results :results raw drawer
+#+begin_src jupyter-python :exports results :results raw drawer
   mixlog = maincomp.collect.abx().groupby(level=0, axis=1).count()
   mix = mixlog.pipe(Categories.logif, condition=lambda x: x>1, default="pure")
   df = df.assign(mixing=mix).set_index("mixing", append=True)
@@ -95,7 +101,7 @@
 #+RESULTS:
 
 ** auto subset index
-#+begin_src jupyter-python :session sm :kernel aikit :exports results :results raw drawer
+#+begin_src jupyter-python :exports results :results raw drawer
   size = df.index.isin(["2x2x2"], level="sim_cell")
   #maincomp
   maincomp = maincomp.collect.abx()
@@ -111,47 +117,50 @@
 #+end_src
 
 #+RESULTS:
+: [INFO] 2022-04-05 18:00:43 - Note: NumExpr detected 12 cores but "NUMEXPR_MAX_THREADS" not set, so enforcing safe limit of 8.
+: [INFO] 2022-04-05 18:00:43 - NumExpr defaulting to 8 threads.
+: /opt/miniconda3/envs/aikit/lib/python3.9/site-packages/pandas/core/computation/expressions.py:204: UserWarning: evaluating in Python space because the '*' operator is not supported by numexpr for the bool dtype, use '&' instead
+:   warnings.warn(
 
 ** apply subsets
-#+begin_src jupyter-python :session sm :kernel aikit :exports results :results raw drawer
-  maincomp = maincomp[mfocus]
-  empcomp = empcomp[efocus]
+#+begin_src jupyter-python :exports results :results raw drawer
+  mc = maincomp[mfocus]
+  ec = empcomp[efocus]
   mys = df[mfocus]
   eys = df[efocus] #only 56 compounds
 #+end_src
 
 #+RESULTS:
 
-* Composition Models
-** Optimal Model on Composition                                    :B_frame:
-:PROPERTIES:
-:BEAMER_env: frame
-:END:
-*** COMMENT construct pipeline + create test/train splits
+* Prepare test/train split and Pipelines of interest
+** construct pipeline + create test/train splits
 Normalize each sampled composition prior to regression
-#+begin_src jupyter-python :session sm :kernel aikit :exports results :results raw drawer
+#+begin_src jupyter-python :exports results :results raw drawer
   fillna = SimpleImputer(strategy="constant", fill_value=0.0)
   cpipeRFR = mkpipe(fillna, Normalizer(), RandomForestRegressor())
-  cpipeGPR = mkpipe(fillna, Normalizer(), GaussianProcessRegressor())
-  cpipeGBR = mkpipe(fillna, Normalizer(), GradientBoostingRegressor())
-  mc_tr, mc_ts, my_tr, my_ts = tts(maincomp, mys,
+  ppipeRFR = mkpipe(StandardScaler(), RandomForestRegressor())
+  mc_tr, mc_ts, my_tr, my_ts = tts(mc, mys,
                                    train_size=0.8, random_state=0)
-  ec_tr, ec_ts, ey_tr, ey_ts = tts(empcomp, eys,
+  ec_tr, ec_ts, ey_tr, ey_ts = tts(ec, eys,
                                    train_size=0.8, random_state=0)
 #+end_src
 
 #+RESULTS:
+: [INFO] 2022-04-05 18:00:44 - sklearn.model_selection.train_test_split: running accelerated version on CPU
+: [INFO] 2022-04-05 18:00:44 - sklearn.model_selection.train_test_split: fallback to original Scikit-learn
+: [INFO] 2022-04-05 18:00:44 - sklearn.model_selection.train_test_split: running accelerated version on CPU
+: [INFO] 2022-04-05 18:00:44 - sklearn.model_selection.train_test_split: fallback to original Scikit-learn
 
-*** COMMENT construct Hyper-parameter Spaces
-**** RFR params
-#+begin_src jupyter-python :session sm :kernel aikit :exports results :results raw drawer
+* Model BG and Iteratively Optimize Hyperparameters
+** 1. construct original Hyper-parameter Space
+#+begin_src jupyter-python :exports results :results raw drawer
   #"max_depth": [10, 20, 40],
   #"min_samples_split": [2, 5, 10]
   RFRgrid = [
       {'normalizer__norm': ['l1', 'l2', 'max'],
        'randomforestregressor__bootstrap': [True], #build each tree from sample
        'randomforestregressor__ccp_alpha': [0.0, 0.5, 1.0], #cost-complexity pruning
-       'randomforestregressor__criterion': ['mse'], #['squared_error', 'poisson'], update sklearn and try these
+       'randomforestregressor__criterion': ['mse'], #['squared_error', 'poisson'], #update sklearn and try these
        'randomforestregressor__max_depth': [None], #investigate dept of constituent trees, limit
        'randomforestregressor__max_features': ['auto', 'sqrt', 3], #split after considering
        'randomforestregressor__max_leaf_nodes': [None], #investigate nodularity of trees
@@ -193,31 +202,120 @@ Normalize each sampled composition prior to regression
 
 #+RESULTS:
 
-**** GPR params
-#+begin_src jupyter-python :session sm :kernel aikit :exports results :results raw drawer
-  
-#+end_src
-**** GBR params
-#+begin_src jupyter-python :session sm :kernel aikit :exports results :results raw drawer
-
-#+end_src
-** Do Cross-Validated Regressions, meter performance, get best model
-:PROPERTIES:
-:ID:       38022a45-6806-48c1-9fa6-25eabf75ac87
-:END:
-#+begin_src jupyter-python :session sm :kernel aikit :exports results :results raw drawer :async yes
+** 2. Composition model of PBE_BG
+#+begin_src jupyter-python :exports results :results raw drawer :async yes
   RFRscoring = {'r2': make_scorer(r2_score),
                 'ev': make_scorer(explained_variance_score),
-                'maxerr': make_scorer(max_error, greater_is_better=False),}
-                #'mse': make_scorer(mean_squared_error, greater_is_better=False, squared=False)}
+                'maxerr': make_scorer(max_error, greater_is_better=False),
+                'mse': make_scorer(mean_squared_error, greater_is_better=False, squared=False)}
   rfr = gsCV(cpipeRFR, param_grid=RFRgrid,
              cv=3, verbose=1, scoring=RFRscoring, refit="r2", return_train_score=True)
-  rfr.fit(ec_tr, ey_tr.PBE_bg_eV)
+  rfr.fit(mc_tr, my_tr.PBE_bg_eV)
 #+end_src
 
-* COMMENT compute property descriptors
+#+RESULTS:
+:results:
+#+begin_example
+  GridSearchCV(cv=3,
+               estimator=Pipeline(steps=[('simpleimputer',
+                                          SimpleImputer(fill_value=0.0,
+                                                        strategy='constant')),
+                                         ('normalizer', Normalizer()),
+                                         ('randomforestregressor',
+                                          RandomForestRegressor())]),
+               param_grid=[{'normalizer__norm': ['l1', 'l2', 'max'],
+                            'randomforestregressor__bootstrap': [True],
+                            'randomforestregressor__ccp_alpha': [0.0, 0.5, 1.0],
+                            'randomforestregr...
+                            'randomforestregressor__random_state': [None],
+                            'randomforestregressor__verbose': [0],
+                            'randomforestregressor__warm_start': [False]}],
+               refit='r2', return_train_score=True,
+               scoring={'ev': make_scorer(explained_variance_score),
+                        'maxerr': make_scorer(max_error, greater_is_better=False),
+                        'mse': make_scorer(mean_squared_error, greater_is_better=False, squared=False),
+                        'r2': make_scorer(r2_score)},
+               verbose=1)
+#+end_example
+:end:
+
+** 3. Determine next Grid Space to explore
+#+begin_src jupyter-python :exports results :results raw drawer :async yes :pandoc org
+  summary, next_grid = summarize_HPO(rfr, RFRgrid, topN=10, metric_weights=[1,1,1,1], strategy="oavg")
+  summary
+#+end_src
+
+#+RESULTS:
+:results:
+|                                                 | space_0         | space_1         | entropy_0 | entropy_1 | scores_0           | scores_1           | next_0       | next_1       |
+|-------------------------------------------------+-----------------+-----------------+-----------+-----------+--------------------+--------------------+--------------+--------------|
+| normalizer__norm                                | [l1, l2, max]   | [l1, l2, max]   | 1.057905  | 1.057905  | [9.38, 1.22, 2.98] | [9.38, 1.22, 2.98] | [l1]         | [l1]         |
+| randomforestregressor__bootstrap                | [True]          | [False]         | 0.367504  | 0.298774  | [6.86]             | [6.72]             | [True]       | [False]      |
+| randomforestregressor__ccp_alpha                | [0.0, 0.5, 1.0] | [0.0, 0.5, 1.0] | -0.000000 | -0.000000 | NaN                | NaN                | [0.0]        | [0.0]        |
+| randomforestregressor__criterion                | [mse]           | [mse]           | -0.000000 | -0.000000 | NaN                | NaN                | [mse]        | [mse]        |
+| randomforestregressor__max_depth                | [None]          | [None]          | -0.000000 | -0.000000 | NaN                | NaN                | [None]       | [None]       |
+| randomforestregressor__max_features             | [auto, sqrt, 3] | [auto, sqrt, 3] | 1.073394  | 1.073394  | [4.87, 4.61, 4.1]  | [4.87, 4.61, 4.1]  | [auto, sqrt] | [auto, sqrt] |
+| randomforestregressor__max_leaf_nodes           | [None]          | [None]          | -0.000000 | -0.000000 | NaN                | NaN                | [None]       | [None]       |
+| randomforestregressor__max_samples              | [0.9, 0.6, 0.3] | [None]          | 0.367504  | 0.298774  | [6.86, 0.0, 0.0]   | [6.72]             | [0.9]        | [None]       |
+| randomforestregressor__min_impurity_decrease    | [0.0]           | [0.0]           | -0.000000 | -0.000000 | NaN                | NaN                | [0.0]        | [0.0]        |
+| randomforestregressor__min_impurity_split       | [None]          | [None]          | -0.000000 | -0.000000 | NaN                | NaN                | [None]       | [None]       |
+| randomforestregressor__min_samples_leaf         | [1]             | [1]             | -0.000000 | -0.000000 | NaN                | NaN                | [1]          | [1]          |
+| randomforestregressor__min_samples_split        | [2]             | [2]             | -0.000000 | -0.000000 | NaN                | NaN                | [2]          | [2]          |
+| randomforestregressor__min_weight_fraction_leaf | [0.0]           | [0.0]           | -0.000000 | -0.000000 | NaN                | NaN                | [0.0]        | [0.0]        |
+| randomforestregressor__n_estimators             | [20, 50, 100]   | [20, 50, 100]   | 1.057905  | 1.057905  | [1.99, 7.82, 3.77] | [1.99, 7.82, 3.77] | [50]         | [50]         |
+| randomforestregressor__n_jobs                   | [4]             | [4]             | -0.000000 | -0.000000 | NaN                | NaN                | [4]          | [4]          |
+| randomforestregressor__oob_score                | [True]          | NaN             | 0.367504  | NaN       | [6.86]             | NaN                | [True]       | NaN          |
+| randomforestregressor__random_state             | [None]          | [None]          | -0.000000 | -0.000000 | NaN                | NaN                | [None]       | [None]       |
+| randomforestregressor__verbose                  | [0]             | [0]             | -0.000000 | -0.000000 | NaN                | NaN                | [0]          | [0]          |
+| randomforestregressor__warm_start               | [False]         | [False]         | -0.000000 | -0.000000 | NaN                | NaN                | [False]      | [False]      |
+:end:
+
+** 4. construct subsequent HP space before re-executing 2 and 3 above
+#+begin_src jupyter-python :exports results :results raw drawer :async yes :pandoc org
+  RFRgrid = [
+      {'normalizer__norm': ['l1'],
+       'randomforestregressor__bootstrap': [True],
+       'randomforestregressor__ccp_alpha': [0.0],
+       'randomforestregressor__criterion': ['mse'],
+       'randomforestregressor__max_depth': [None],
+       'randomforestregressor__max_features': ['auto', 'sqrt'],
+       'randomforestregressor__max_leaf_nodes': [None],
+       'randomforestregressor__max_samples': [0.9],
+       'randomforestregressor__min_impurity_decrease': [0.0],
+       'randomforestregressor__min_impurity_split': [None],
+       'randomforestregressor__min_samples_leaf': [1],
+       'randomforestregressor__min_samples_split': [2],
+       'randomforestregressor__min_weight_fraction_leaf': [0.0],
+       'randomforestregressor__n_estimators': [50],
+       'randomforestregressor__n_jobs': [4],
+       'randomforestregressor__oob_score': [True],
+       'randomforestregressor__random_state': [None],
+       'randomforestregressor__verbose': [0],
+       'randomforestregressor__warm_start': [False]},
+      {'normalizer__norm': ['l1'],
+       'randomforestregressor__bootstrap': [False],
+       'randomforestregressor__ccp_alpha': [0.0],
+       'randomforestregressor__criterion': ['mse'],
+       'randomforestregressor__max_depth': [None],
+       'randomforestregressor__max_features': ['auto', 'sqrt'],
+       'randomforestregressor__max_leaf_nodes': [None],
+       'randomforestregressor__max_samples': [None],
+       'randomforestregressor__min_impurity_decrease': [0.0],
+       'randomforestregressor__min_impurity_split': [None],
+       'randomforestregressor__min_samples_leaf': [1],
+       'randomforestregressor__min_samples_split': [2],
+       'randomforestregressor__min_weight_fraction_leaf': [0.0],
+       'randomforestregressor__n_estimators': [50],
+       'randomforestregressor__n_jobs': [4],
+       'randomforestregressor__random_state': [None],
+       'randomforestregressor__verbose': [0],
+       'randomforestregressor__warm_start': [False]}
+  ]
+#+end_src
+
+* compute property descriptors
 ** create relational table
-#+begin_src jupyter-python :session sm :kernel aikit :exports results :results raw drawer
+#+begin_src jupyter-python :exports results :results raw drawer
   mrel = maincomp.reset_index().melt(id_vars=maincomp.index.names).dropna(axis=0, subset="value")
   mrel = mrel.set_index(maincomp.index.names, append=False)
   erel = empcomp.reset_index().melt(id_vars=empcomp.index.names).dropna(axis=0, subset="value")
@@ -227,7 +325,7 @@ Normalize each sampled composition prior to regression
 #+RESULTS:
 
 ** perform main join
-#+begin_src jupyter-python :session sm :kernel aikit :exports results :results raw drawer
+#+begin_src jupyter-python :exports results :results raw drawer
   join = pd.merge(left=mrel, right=lookup, left_on="element", right_on="Formula")
   join = join.set_index(mrel.index)
   mainprop = join.groupby("site").apply(
@@ -245,7 +343,7 @@ Normalize each sampled composition prior to regression
 #+RESULTS:
 
 ** get empprop from mainprop
-#+begin_src jupyter-python :session sm :kernel aikit :exports results :results raw drawer
+#+begin_src jupyter-python :exports results :results raw drawer
   empprop = mainprop.reindex(index=empcomp.index)
 #+end_src
 
@@ -256,7 +354,7 @@ Normalize each sampled composition prior to regression
 :BEAMER_env: frame
 :END:
 StandardScale each prop feature prior to regression
-#+begin_src jupyter-python :session sm :kernel aikit :exports results :results raw drawer
+#+begin_src jupyter-python :exports results :results raw drawer
 ppipe = mkpipe(StandardScaler(), RandomForestRegressor())
 
 X_train, X_test, y_train, y_test = train_test_split(maincomp, mys, test_size=0.2, random_state=0)
