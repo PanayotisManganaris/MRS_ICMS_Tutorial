@@ -1,12 +1,10 @@
 #+TITLE: Optimizing RFR Model across multiple metrics
-#+PROPERTY: header-args :session /home/panos/.local/share/jupyter/runtime/kernel-a766a0e8-5d5a-4e4c-9776-1ac1bc34602b.json
+#+PROPERTY: header-args :session aikit :kernel aikit
 * dependencies
 #+begin_src jupyter-python :exports results :results raw drawer
   %load_ext autoreload
   %autoreload 2
 #+end_src
-
-  #+RESULTS:
   
 #+begin_src jupyter-python :exports results :results raw drawer
   import sys
@@ -15,19 +13,15 @@
   # featurization
   from cmcl.data.frame import *
   from cmcl.features.categories import Categories
-  from yogi.model_selection.butler import summarize_HPO, collect_top_rankings
+  from yogi.model_selection.butler import summarize_HPO
+  from yogi.metrics.index_aware_scoring import PandasScoreAdaptor as PSA
 #+end_src
-
-#+RESULTS:
 
 #+begin_src jupyter-python :exports results :results raw drawer
   ## accelerated ml pipeline ##
   from sklearnex import patch_sklearn
   patch_sklearn()
 #+end_src
-
-  #+RESULTS:
-  : Intel(R) Extension for Scikit-learn* enabled (https://github.com/intel/scikit-learn-intelex)
   
 #+begin_src jupyter-python :exports results :results raw drawer
   # data tools
@@ -36,7 +30,7 @@
   import numpy as np
   # feature engineering
   from sklearn.impute import SimpleImputer
-  from sklearn.preprocessing import Normalizer
+  from sklearn.preprocessing import Normalizer, StandardScaler
   # predictors
   from sklearn.ensemble import RandomForestRegressor
   ## pipeline workflow
@@ -49,11 +43,6 @@
   import matplotlib.pyplot as plt
   from sklearn import set_config
 #+end_src
-
-  #+RESULTS:
-* TODO group-aware scorer
-- [ ] make sklearn compliant, discrete-by-label, scoring class. Initially, focus on assessing regressions for alloy mix subsets... somehow
-- [ ] build towards multi-fidelity learning
 * load data
 #+begin_src jupyter-python :exports results :results raw drawer
   sqlbase = """SELECT *
@@ -68,15 +57,11 @@
       almora = pd.read_sql(sqlalmora, conn, index_col='index')
 #+end_src
 
-#+RESULTS:
-
 * Clean Data
 #+begin_src jupyter-python :exports results :results raw drawer
   lookup = lookup.set_index("Formula")
   df = df.set_index(["Formula", "sim_cell"], append=True)
 #+end_src
-
-  #+RESULTS:
 
 ** manual subset index + subset constituents
 - drop formula with large lattice parameter difference between HSE and PBE (calculation to be rerun)
@@ -86,19 +71,6 @@
   maincomp = df.ft.comp().iloc[:, :14:]
   empcomp = df.ft.comp().loc[:, ["FA", "MA", "Cs", "Pb", "Sn", "I", "Br", "Cl"]]
 #+end_src
-
-#+RESULTS:
-
-** generate and track mix categories
-#+begin_src jupyter-python :exports results :results raw drawer
-  mixlog = maincomp.collect.abx().groupby(level=0, axis=1).count()
-  mix = mixlog.pipe(Categories.logif, condition=lambda x: x>1, default="pure")
-  df = df.assign(mixing=mix).set_index("mixing", append=True)
-  maincomp = maincomp.assign(mixing=mix).set_index("mixing", append=True)
-  empcomp = empcomp.assign(mixing=mix).set_index("mixing", append=True)    
-#+end_src
-
-#+RESULTS:
 
 ** auto subset index
 #+begin_src jupyter-python :exports results :results raw drawer
@@ -116,12 +88,6 @@
   efocus = size*evB*evA*evX
 #+end_src
 
-#+RESULTS:
-: [INFO] 2022-04-05 18:00:43 - Note: NumExpr detected 12 cores but "NUMEXPR_MAX_THREADS" not set, so enforcing safe limit of 8.
-: [INFO] 2022-04-05 18:00:43 - NumExpr defaulting to 8 threads.
-: /opt/miniconda3/envs/aikit/lib/python3.9/site-packages/pandas/core/computation/expressions.py:204: UserWarning: evaluating in Python space because the '*' operator is not supported by numexpr for the bool dtype, use '&' instead
-:   warnings.warn(
-
 ** apply subsets
 #+begin_src jupyter-python :exports results :results raw drawer
   mc = maincomp[mfocus]
@@ -130,28 +96,34 @@
   eys = df[efocus] #only 56 compounds
 #+end_src
 
-#+RESULTS:
-
 * Prepare test/train split and Pipelines of interest
+** generate mix category
+this helps with model evaluation for every subset in our data
+#+begin_src jupyter-python :exports results :results raw drawer
+  mixlog = mc.groupby(level=0, axis=1).count()
+  mix = mixlog.pipe(Categories.logif, condition=lambda x: x>1, default="pure")
+#+end_src
+
 ** construct pipeline + create test/train splits
 Normalize each sampled composition prior to regression
 #+begin_src jupyter-python :exports results :results raw drawer
   fillna = SimpleImputer(strategy="constant", fill_value=0.0)
   cpipeRFR = mkpipe(fillna, Normalizer(), RandomForestRegressor())
   ppipeRFR = mkpipe(StandardScaler(), RandomForestRegressor())
-  mc_tr, mc_ts, my_tr, my_ts = tts(mc, mys,
-                                   train_size=0.8, random_state=0)
-  ec_tr, ec_ts, ey_tr, ey_ts = tts(ec, eys,
-                                   train_size=0.8, random_state=0)
+  mmix = mix[mfocus]
+  emix = mix[efocus]
+  mc_tr, mc_ts, my_tr, my_ts, mmix_tr, mmix_ts = tts(mc, mys, mmix,
+                                                     train_size=0.8, random_state=0)
+  ec_tr, ec_ts, ey_tr, ey_ts, emix_tr, emix_ts = tts(ec, eys, emix,
+                                                     train_size=0.8, random_state=0)
 #+end_src
 
-#+RESULTS:
-: [INFO] 2022-04-05 18:00:44 - sklearn.model_selection.train_test_split: running accelerated version on CPU
-: [INFO] 2022-04-05 18:00:44 - sklearn.model_selection.train_test_split: fallback to original Scikit-learn
-: [INFO] 2022-04-05 18:00:44 - sklearn.model_selection.train_test_split: running accelerated version on CPU
-: [INFO] 2022-04-05 18:00:44 - sklearn.model_selection.train_test_split: fallback to original Scikit-learn
+** prepare subset scoring weights
+#+begin_src jupyter-python :exports results :results raw drawer
+  mixcat = pd.get_dummies(mmix_tr)
+#+end_src
 
-* Model BG and Iteratively Optimize Hyperparameters
+* Model BG using Combinations of Hyperparameters
 ** 1. construct original Hyper-parameter Space
 #+begin_src jupyter-python :exports results :results raw drawer
   #"max_depth": [10, 20, 40],
@@ -200,77 +172,37 @@ Normalize each sampled composition prior to regression
   ]
 #+end_src
 
-#+RESULTS:
-
 ** 2. Composition model of PBE_BG
 #+begin_src jupyter-python :exports results :results raw drawer :async yes
+  site_mse = PSA(mean_squared_error).score
   RFRscoring = {'r2': make_scorer(r2_score),
                 'ev': make_scorer(explained_variance_score),
                 'maxerr': make_scorer(max_error, greater_is_better=False),
-                'mse': make_scorer(mean_squared_error, greater_is_better=False, squared=False)}
-  rfr = gsCV(cpipeRFR, param_grid=RFRgrid,
-             cv=3, verbose=1, scoring=RFRscoring, refit="r2", return_train_score=True)
-  rfr.fit(mc_tr, my_tr.PBE_bg_eV)
+                'rmse': make_scorer(mean_squared_error, greater_is_better=False, squared=False),
+                'A_rmse': make_scorer(site_mse, greater_is_better=False,
+                                      squared=False, sample_weight=mixcat.A),
+                'B_rmse': make_scorer(site_mse, greater_is_better=False,
+                                      squared=False, sample_weight=mixcat.B),
+                'X_rmse': make_scorer(site_mse, greater_is_better=False,
+                                      squared=False, sample_weight=mixcat.X),
+                'BandX_rmse': make_scorer(site_mse, greater_is_better=False,
+                                          squared=False, sample_weight=mixcat.BandX),
+                'Pure_rmse': make_scorer(mean_squared_error, greater_is_better=False,
+                                         squared=False, sample_weight=mixcat.pure),}
+  
+  crfr = gsCV(estimator=cpipeRFR,
+              param_grid=RFRgrid,
+              cv=3, verbose=1, scoring=RFRscoring, refit="r2", return_train_score=True)
+  crfr.fit(mc_tr, my_tr.PBE_bg_eV)
 #+end_src
-
-#+RESULTS:
-:results:
-#+begin_example
-  GridSearchCV(cv=3,
-               estimator=Pipeline(steps=[('simpleimputer',
-                                          SimpleImputer(fill_value=0.0,
-                                                        strategy='constant')),
-                                         ('normalizer', Normalizer()),
-                                         ('randomforestregressor',
-                                          RandomForestRegressor())]),
-               param_grid=[{'normalizer__norm': ['l1', 'l2', 'max'],
-                            'randomforestregressor__bootstrap': [True],
-                            'randomforestregressor__ccp_alpha': [0.0, 0.5, 1.0],
-                            'randomforestregr...
-                            'randomforestregressor__random_state': [None],
-                            'randomforestregressor__verbose': [0],
-                            'randomforestregressor__warm_start': [False]}],
-               refit='r2', return_train_score=True,
-               scoring={'ev': make_scorer(explained_variance_score),
-                        'maxerr': make_scorer(max_error, greater_is_better=False),
-                        'mse': make_scorer(mean_squared_error, greater_is_better=False, squared=False),
-                        'r2': make_scorer(r2_score)},
-               verbose=1)
-#+end_example
-:end:
-
 ** 3. Determine next Grid Space to explore
 #+begin_src jupyter-python :exports results :results raw drawer :async yes :pandoc org
   summary, next_grid = summarize_HPO(rfr, RFRgrid, topN=10, metric_weights=[1,1,1,1], strategy="oavg")
   summary
 #+end_src
 
-#+RESULTS:
-:results:
-|                                                 | space_0         | space_1         | entropy_0 | entropy_1 | scores_0           | scores_1           | next_0       | next_1       |
-|-------------------------------------------------+-----------------+-----------------+-----------+-----------+--------------------+--------------------+--------------+--------------|
-| normalizer__norm                                | [l1, l2, max]   | [l1, l2, max]   | 1.057905  | 1.057905  | [9.38, 1.22, 2.98] | [9.38, 1.22, 2.98] | [l1]         | [l1]         |
-| randomforestregressor__bootstrap                | [True]          | [False]         | 0.367504  | 0.298774  | [6.86]             | [6.72]             | [True]       | [False]      |
-| randomforestregressor__ccp_alpha                | [0.0, 0.5, 1.0] | [0.0, 0.5, 1.0] | -0.000000 | -0.000000 | NaN                | NaN                | [0.0]        | [0.0]        |
-| randomforestregressor__criterion                | [mse]           | [mse]           | -0.000000 | -0.000000 | NaN                | NaN                | [mse]        | [mse]        |
-| randomforestregressor__max_depth                | [None]          | [None]          | -0.000000 | -0.000000 | NaN                | NaN                | [None]       | [None]       |
-| randomforestregressor__max_features             | [auto, sqrt, 3] | [auto, sqrt, 3] | 1.073394  | 1.073394  | [4.87, 4.61, 4.1]  | [4.87, 4.61, 4.1]  | [auto, sqrt] | [auto, sqrt] |
-| randomforestregressor__max_leaf_nodes           | [None]          | [None]          | -0.000000 | -0.000000 | NaN                | NaN                | [None]       | [None]       |
-| randomforestregressor__max_samples              | [0.9, 0.6, 0.3] | [None]          | 0.367504  | 0.298774  | [6.86, 0.0, 0.0]   | [6.72]             | [0.9]        | [None]       |
-| randomforestregressor__min_impurity_decrease    | [0.0]           | [0.0]           | -0.000000 | -0.000000 | NaN                | NaN                | [0.0]        | [0.0]        |
-| randomforestregressor__min_impurity_split       | [None]          | [None]          | -0.000000 | -0.000000 | NaN                | NaN                | [None]       | [None]       |
-| randomforestregressor__min_samples_leaf         | [1]             | [1]             | -0.000000 | -0.000000 | NaN                | NaN                | [1]          | [1]          |
-| randomforestregressor__min_samples_split        | [2]             | [2]             | -0.000000 | -0.000000 | NaN                | NaN                | [2]          | [2]          |
-| randomforestregressor__min_weight_fraction_leaf | [0.0]           | [0.0]           | -0.000000 | -0.000000 | NaN                | NaN                | [0.0]        | [0.0]        |
-| randomforestregressor__n_estimators             | [20, 50, 100]   | [20, 50, 100]   | 1.057905  | 1.057905  | [1.99, 7.82, 3.77] | [1.99, 7.82, 3.77] | [50]         | [50]         |
-| randomforestregressor__n_jobs                   | [4]             | [4]             | -0.000000 | -0.000000 | NaN                | NaN                | [4]          | [4]          |
-| randomforestregressor__oob_score                | [True]          | NaN             | 0.367504  | NaN       | [6.86]             | NaN                | [True]       | NaN          |
-| randomforestregressor__random_state             | [None]          | [None]          | -0.000000 | -0.000000 | NaN                | NaN                | [None]       | [None]       |
-| randomforestregressor__verbose                  | [0]             | [0]             | -0.000000 | -0.000000 | NaN                | NaN                | [0]          | [0]          |
-| randomforestregressor__warm_start               | [False]         | [False]         | -0.000000 | -0.000000 | NaN                | NaN                | [False]      | [False]      |
-:end:
-
-** 4. construct subsequent HP space before re-executing 2 and 3 above
+* BG -- Iteratively Optimize Hyperparameters
+** 1. construct subsequent HP space
 #+begin_src jupyter-python :exports results :results raw drawer :async yes :pandoc org
   RFRgrid = [
       {'normalizer__norm': ['l1'],
@@ -316,13 +248,11 @@ Normalize each sampled composition prior to regression
 * compute property descriptors
 ** create relational table
 #+begin_src jupyter-python :exports results :results raw drawer
-  mrel = maincomp.reset_index().melt(id_vars=maincomp.index.names).dropna(axis=0, subset="value")
-  mrel = mrel.set_index(maincomp.index.names, append=False)
+  mrel = mc.reset_index().melt(id_vars=maincomp.index.names).dropna(axis=0, subset="value")
+  mrel = mrel.set_index(mc.index.names, append=False)
   erel = empcomp.reset_index().melt(id_vars=empcomp.index.names).dropna(axis=0, subset="value")
   erel = erel.set_index(empcomp.index.names, append=False)
 #+end_src
-
-#+RESULTS:
 
 ** perform main join
 #+begin_src jupyter-python :exports results :results raw drawer
@@ -340,14 +270,10 @@ Normalize each sampled composition prior to regression
   mainprop.index=maincomp.index
 #+end_src
 
-#+RESULTS:
-
 ** get empprop from mainprop
 #+begin_src jupyter-python :exports results :results raw drawer
   empprop = mainprop.reindex(index=empcomp.index)
 #+end_src
-
-#+RESULTS:
 * Site-Averaged Properties Models
 ** Optimal Model on Properties                                     :B_frame:
 :PROPERTIES:
