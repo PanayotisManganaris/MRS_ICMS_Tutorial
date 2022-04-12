@@ -19,13 +19,28 @@
 #+latex_header: \institute[Mannodi Group]{Mannodi Group - Purdue MSE}
 #+latex_header: \mode<beamer>{\usetheme{Warsaw}}
 #+latex_header: \useoutertheme{miniframes}
-#+PROPERTY: header-args :session /home/panos/.local/share/jupyter/runtime/kernel-a766a0e8-5d5a-4e4c-9776-1ac1bc34602b.json
+#+PROPERTY: header-args :session aikit :kernel aikit
 
 #+begin_export latex
 \expandafter\def\expandafter\insertshorttitle\expandafter{%
   \insertshorttitle\hfill
   \insertframenumber\,/\,\inserttotalframenumber}
 #+end_export
+* COMMENT imports
+#+begin_src jupyter-python :exports none :results none
+  %load_ext autoreload
+  %autoreload 2
+#+end_src
+  
+#+begin_src jupyter-python :exports none :results none
+  import sys
+  sys.path.append("/home/panos/src/cmcl")
+  sys.path.append("/home/panos/src/yogi")
+  # featurization
+  from cmcl.data.frame import *
+  from cmcl.features.categories import Categories
+  from yogi.model_selection.butler import summarize_HPO, collect_top_rankings
+#+end_src
 * COMMENT Data Base Model + New Cmcl Workflow
 ** Considerations for Designing Computational Experiments          :B_frame:
 :PROPERTIES:
