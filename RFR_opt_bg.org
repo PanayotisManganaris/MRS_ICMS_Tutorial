@@ -1,27 +1,73 @@
-#+TITLE: Optimizing RFR Model across multiple metrics
-#+PROPERTY: header-args :session aikit :kernel aikit
+#+TITLE: Optimizing RFR Models based on Perovskite Compositions
+#+AUTHOR: Panayotis Manganaris
+#+EMAIL: pmangana@purdue.edu
+#+PROPERTY: header-args :session aikit :kernel aikit :async yes :pandoc org
 * dependencies
+clone the following repositories into your home "src" directory to use
+this notebook
+
+https://github.com/PanayotisManganaris/cmcl
+https://github.com/PanayotisManganaris/yogi
+https://github.com/PanayotisManganaris/spyglass
+
+if something does not work due to one of these libraries, be sure to
+pull updates both for the above repositories and for this notebook. If
+the error persists, contact me.
 #+begin_src jupyter-python :exports results :results raw drawer
   %load_ext autoreload
   %autoreload 2
 #+end_src
+
+#+RESULTS:
+:results:
+:end:
   
 #+begin_src jupyter-python :exports results :results raw drawer
-  import sys
-  sys.path.append("/home/panos/src/cmcl")
-  sys.path.append("/home/panos/src/yogi")
+  import sys, os
+  sys.path.append(os.path.expanduser("~/src/cmcl"))
+  sys.path.append(os.path.expanduser("~/src/yogi"))
+  sys.path.append(os.path.expanduser("~/src/spyglass"))
   # featurization
   from cmcl.data.frame import *
   from cmcl.features.categories import Categories
-  from yogi.model_selection.butler import summarize_HPO
-  from yogi.metrics.index_aware_scoring import PandasScoreAdaptor as PSA
+  from yogi.model_selection import summarize_HPO
+  from yogi.model_selection import pandas_validation_curve as pvc
+  from yogi.metrics.pandas_scoring import PandasScoreAdaptor as PSA
+  from yogi.metrics.pandas_scoring import batch_score
+  from spyglass.model_imaging import parityplot
 #+end_src
 
+#+RESULTS:
+:results:
+#+begin_example
+  [WARNING] 2022-04-18 19:18:19 - In /opt/miniconda3/envs/aikit/lib/python3.9/site-packages/matplotlib/mpl-data/stylelib/_classic_test.mplstyle: 
+  The text.latex.preview rcparam was deprecated in Matplotlib 3.3 and will be removed two minor releases later.
+  [WARNING] 2022-04-18 19:18:19 - In /opt/miniconda3/envs/aikit/lib/python3.9/site-packages/matplotlib/mpl-data/stylelib/_classic_test.mplstyle: 
+  The mathtext.fallback_to_cm rcparam was deprecated in Matplotlib 3.3 and will be removed two minor releases later.
+  [WARNING] 2022-04-18 19:18:19 - In /opt/miniconda3/envs/aikit/lib/python3.9/site-packages/matplotlib/mpl-data/stylelib/_classic_test.mplstyle: Support for setting the 'mathtext.fallback_to_cm' rcParam is deprecated since 3.3 and will be removed two minor releases later; use 'mathtext.fallback : 'cm' instead.
+  [WARNING] 2022-04-18 19:18:19 - In /opt/miniconda3/envs/aikit/lib/python3.9/site-packages/matplotlib/mpl-data/stylelib/_classic_test.mplstyle: 
+  The validate_bool_maybe_none function was deprecated in Matplotlib 3.3 and will be removed two minor releases later.
+  [WARNING] 2022-04-18 19:18:19 - In /opt/miniconda3/envs/aikit/lib/python3.9/site-packages/matplotlib/mpl-data/stylelib/_classic_test.mplstyle: 
+  The savefig.jpeg_quality rcparam was deprecated in Matplotlib 3.3 and will be removed two minor releases later.
+  [WARNING] 2022-04-18 19:18:19 - In /opt/miniconda3/envs/aikit/lib/python3.9/site-packages/matplotlib/mpl-data/stylelib/_classic_test.mplstyle: 
+  The keymap.all_axes rcparam was deprecated in Matplotlib 3.3 and will be removed two minor releases later.
+  [WARNING] 2022-04-18 19:18:19 - In /opt/miniconda3/envs/aikit/lib/python3.9/site-packages/matplotlib/mpl-data/stylelib/_classic_test.mplstyle: 
+  The animation.avconv_path rcparam was deprecated in Matplotlib 3.3 and will be removed two minor releases later.
+  [WARNING] 2022-04-18 19:18:19 - In /opt/miniconda3/envs/aikit/lib/python3.9/site-packages/matplotlib/mpl-data/stylelib/_classic_test.mplstyle: 
+  The animation.avconv_args rcparam was deprecated in Matplotlib 3.3 and will be removed two minor releases later.
+#+end_example
+:end:
+
+the intel distribution provides accelerated ml algorithms
 #+begin_src jupyter-python :exports results :results raw drawer
-  ## accelerated ml pipeline ##
   from sklearnex import patch_sklearn
   patch_sklearn()
 #+end_src
+
+#+RESULTS:
+:results:
+: Intel(R) Extension for Scikit-learn* enabled (https://github.com/intel/scikit-learn-intelex)
+:end:
   
 #+begin_src jupyter-python :exports results :results raw drawer
   # data tools
@@ -30,105 +76,375 @@
   import numpy as np
   # feature engineering
   from sklearn.impute import SimpleImputer
-  from sklearn.preprocessing import Normalizer, StandardScaler
+  from sklearn.preprocessing import OrdinalEncoder, Normalizer, StandardScaler
   # predictors
   from sklearn.ensemble import RandomForestRegressor
   ## pipeline workflow
   from sklearn.pipeline import make_pipeline as mkpipe
-  from sklearn.model_selection import train_test_split as tts
+  from sklearn.model_selection import KFold, GroupKFold
+  from sklearn.model_selection import learning_curve, validation_curve
+  from sklearn.model_selection import StratifiedShuffleSplit
   from sklearn.model_selection import GridSearchCV as gsCV
   # model eval
   from sklearn.metrics import make_scorer, mean_squared_error, r2_score, explained_variance_score, max_error
   #visualization
-  import matplotlib.pyplot as plt
   from sklearn import set_config
+  import matplotlib.pyplot as plt
+  import seaborn as sns
 #+end_src
+
+#+RESULTS:
+:results:
+:end:
+
 * load data
 #+begin_src jupyter-python :exports results :results raw drawer
-  sqlbase = """SELECT *
+  sqlmannodi = """SELECT *
               FROM mannodi_base"""
   sqlref = """SELECT *
               FROM mannodi_ref_elprop"""
   sqlalmora = """SELECT *
                  FROM almora_agg"""
   with sqlite3.connect("/home/panos/src/cmcl/cmcl/db/perovskites.db") as conn:
-      df = pd.read_sql(sqlbase, conn, index_col="index")
+      mannodi = pd.read_sql(sqlmannodi, conn, index_col="index")
       lookup = pd.read_sql(sqlref, conn, index_col='index')
       almora = pd.read_sql(sqlalmora, conn, index_col='index')
 #+end_src
 
-* Clean Data
+#+RESULTS:
+:results:
+:end:
+
+* Clean Data and Compute Composition Vectors 
 #+begin_src jupyter-python :exports results :results raw drawer
   lookup = lookup.set_index("Formula")
-  df = df.set_index(["Formula", "sim_cell"], append=True)
+  mannodi = mannodi.set_index(["Formula", "sim_cell"], append=True)
 #+end_src
 
-** manual subset index + subset constituents
+#+RESULTS:
+:results:
+:end:
+
+** subset column labels
 - drop formula with large lattice parameter difference between HSE and PBE (calculation to be rerun)
-- large structural deformation identified by observing cubicity metric -- well outside of 5-10% spec?
+- large structural deformation identified by observing deviation-from-cubicity metric -- well outside of 5-10% spec?
 #+begin_src jupyter-python :exports results :results raw drawer
-  df = df.drop(index=["Rb0.375Cs0.625GeBr3", "RbGeBr1.125Cl1.875", "K0.75Cs0.25GeI3", "K8Sn8I9Cl15"], level=1)
-  maincomp = df.ft.comp().iloc[:, :14:]
-  empcomp = df.ft.comp().loc[:, ["FA", "MA", "Cs", "Pb", "Sn", "I", "Br", "Cl"]]
+  mannodi = mannodi.drop(index=["Rb0.375Cs0.625GeBr3", "RbGeBr1.125Cl1.875", "K0.75Cs0.25GeI3", "K8Sn8I9Cl15"], level=1)
+  maincomp = mannodi.ft.comp().iloc[:, :14:]
+  #empcomp = mannodi.ft.comp().loc[:, ["FA", "MA", "Cs", "Pb", "Sn", "I", "Br", "Cl"]]
 #+end_src
+
+#+RESULTS:
+:results:
+:end:
 
 ** auto subset index
+early development focused on an even smaller subset of the composition
+restricted to experimentally available precursors. This is no longer
+done.
 #+begin_src jupyter-python :exports results :results raw drawer
-  size = df.index.isin(["2x2x2"], level="sim_cell")
+  size = mannodi.index.isin(["2x2x2"], level="sim_cell")
   #maincomp
   maincomp = maincomp.collect.abx()
   mcg = maincomp.groupby(level=0, axis=1).sum()
   mvB, mvX, mvA, = mcg.A.isin([1, 8]), mcg.B.isin([1, 8]), mcg.X.isin([3, 24])
   #emcomp
-  empcomp = empcomp.collect.abx()
-  ecg = empcomp.groupby(level=0, axis=1).sum()
-  evB, evX, evA, = ecg.A.isin([1, 8]), ecg.B.isin([1, 8]), ecg.X.isin([3, 24])
+  # empcomp = empcomp.collect.abx()
+  # ecg = empcomp.groupby(level=0, axis=1).sum()
+  # evB, evX, evA, = ecg.A.isin([1, 8]), ecg.B.isin([1, 8]), ecg.X.isin([3, 24])
   #subset indexes
   mfocus = size*mvB*mvA*mvX
-  efocus = size*evB*evA*evX
+  # efocus = size*evB*evA*evX
 #+end_src
+
+#+RESULTS:
+:results:
+: [INFO] 2022-04-18 19:19:53 - Note: NumExpr detected 12 cores but "NUMEXPR_MAX_THREADS" not set, so enforcing safe limit of 8.
+: [INFO] 2022-04-18 19:19:53 - NumExpr defaulting to 8 threads.
+: /opt/miniconda3/envs/aikit/lib/python3.9/site-packages/pandas/core/computation/expressions.py:204: UserWarning: evaluating in Python space because the '*' operator is not supported by numexpr for the bool dtype, use '&' instead
+:   warnings.warn(
+:end:
 
 ** apply subsets
 #+begin_src jupyter-python :exports results :results raw drawer
   mc = maincomp[mfocus]
-  ec = empcomp[efocus]
-  mys = df[mfocus]
-  eys = df[efocus] #only 56 compounds
+  #ec = empcomp[efocus]
+  my = mannodi[mfocus]
+  #ey = mannodi[efocus] #only 56 compounds
 #+end_src
 
-* Prepare test/train split and Pipelines of interest
-** generate mix category
-this helps with model evaluation for every subset in our data
+#+RESULTS:
+:results:
+:end:
+
+** generate mix category and assign to index for future imaging
+this helps with visualizing the final model performance.
 #+begin_src jupyter-python :exports results :results raw drawer
   mixlog = mc.groupby(level=0, axis=1).count()
-  mix = mixlog.pipe(Categories.logif, condition=lambda x: x>1, default="pure")
+  mix = mixlog.pipe(Categories.logif, condition=lambda x: x>1, default="pure", catstring="and")
+  mc = mc.assign(mix=mix).set_index("mix", append=True)
+  #ec = ec.assign(mix=mix).set_index("mix", append=True)
+  my = my.assign(mix=mix).set_index("mix", append=True)
+  #ey = ey.assign(mix=mix).set_index("mix", append=True)
 #+end_src
 
-** construct pipeline + create test/train splits
-Normalize each sampled composition prior to regression
+#+RESULTS:
+:results:
+:end:
+
+* Make Composition Pipelines
+Two nearly identical pipelines are created at this point.
+
+One will be used to Determine what the referee test train split will
+be. As such, it will see the test data. To ensure it does not pollute
+the global random state, it will be deterministically seeded.
+
+The second pipeline will initialize itself every fit call with a
+distinct local random state inhereted from the global state. it will
+never be fitted to the test partition determined by using the learning
+curves based on the first pipeline.
+
+Both pipelines are initially created using default regressor
+parameters. For the composition model, The regression is only
+performed after an imputer treats N/A constituent quantities as zero
+and a normalizer transformer ensures a bounded domain.
 #+begin_src jupyter-python :exports results :results raw drawer
   fillna = SimpleImputer(strategy="constant", fill_value=0.0)
-  cpipeRFR = mkpipe(fillna, Normalizer(), RandomForestRegressor())
-  ppipeRFR = mkpipe(StandardScaler(), RandomForestRegressor())
-  mmix = mix[mfocus]
-  emix = mix[efocus]
-  mc_tr, mc_ts, my_tr, my_ts, mmix_tr, mmix_ts = tts(mc, mys, mmix,
-                                                     train_size=0.8, random_state=0)
-  ec_tr, ec_ts, ey_tr, ey_ts, emix_tr, emix_ts = tts(ec, eys, emix,
-                                                     train_size=0.8, random_state=0)
+  LCregressor = RandomForestRegressor(random_state=2718281828)
+  LCpipe = mkpipe(fillna, Normalizer(), LCregressor)
+  realregressor = RandomForestRegressor()
+  cpipe = mkpipe(fillna, Normalizer(), realregressor)
 #+end_src
 
-** prepare subset scoring weights
+#+RESULTS:
+:results:
+:end:
+
+* Scoring Scheme
+This dataset posits a challenge to successful modeling. We seek to
+create a regressor which generalizes well to perovskites of any alloy
+character. As discussed in [PREPRINT] The dataset contains
+representatives mainly from pure, A, B and X-site alloyed
+perovskites. Some of which have substantially differing statistical
+profiles, thereby inviting a model to fit to artifacts of the sample
+distributions rather than physically meaningful information. Starting
+now, great care will be taken to mitigate this.
+
+The composition space is approximated by a set of discrete domains due
+the limited nature of the 2x2x2 supercells used to obtain this
+data. The pure domain is completely covered by 90 data points. The
+alloy domains are combinatorial large in the 14 dimensional component
+space under focus, and each has only been sparsely sampled.
+
+Recall, our primary objective with this modeling effort is to create a
+surrogate model of these domains that can inform future computations
+needed to exhaustively explore it.
+
+In order to validate that our model generalizes well, it will be
+necessary to score the model's performance with respect to it's
+predictions individually over each alloy domain simultaneously with
+it's prediction over the union of these domains.
+
+** prepare subset scoring weights and ordinal group labels
 #+begin_src jupyter-python :exports results :results raw drawer
-  mixcat = pd.get_dummies(mmix_tr)
+  mixweight = pd.get_dummies(mix)
+  mixcat = pd.Series(OrdinalEncoder().fit_transform(mix.values.reshape(-1, 1)).reshape(-1),
+                       index=mc.index).astype(int)
 #+end_src
 
-* Model BG using Combinations of Hyperparameters
-** 1. construct original Hyper-parameter Space
+#+RESULTS:
+:results:
+:end:
+
+** Define Scoring Metrics
+Nine metrics are used to monitor the fitness of the random forest
+model. R^2 and Explained Variance scores keep track of the
+regression's ability to capture the data trend and spread. Max Error
+helps to keep track the largest breakdown in accuracy. RMSE tracks
+average accuracy, with sensitivity to the number of extreme
+deviations.  RMSE is measured for the whole dataset and for each alloy
+class represented therein.
+
+The exact choice of metrics varies by model architecture, but the
+6-way RMSE measurement is always used.
+
+the PandasScoreAdaptor (PSA) ensures the prediction losses are
+weighted correctly when scoring so long as both the targets and the
+sample weights passed to the estimators are always pandas Series
+objects
+#+begin_src jupyter-python :exports results :results raw drawer
+  site_mse = PSA(mean_squared_error).score
+  scorings = {'r2': make_scorer(r2_score),
+                'ev': make_scorer(explained_variance_score),
+                'maxerr': make_scorer(max_error, greater_is_better=False),
+                'rmse': make_scorer(mean_squared_error, greater_is_better=False, squared=False),
+                'A_rmse': make_scorer(site_mse, greater_is_better=False,
+                                      squared=False, sample_weight=mixweight.A),
+                'B_rmse': make_scorer(site_mse, greater_is_better=False,
+                                      squared=False, sample_weight=mixweight.B),
+                'X_rmse': make_scorer(site_mse, greater_is_better=False,
+                                      squared=False, sample_weight=mixweight.X),
+                'BandX_rmse': make_scorer(site_mse, greater_is_better=False,
+                                          squared=False, sample_weight=mixweight.BandX),
+                'Pure_rmse': make_scorer(site_mse, greater_is_better=False,
+                                         squared=False, sample_weight=mixweight.pure),}
+#+end_src
+
+#+RESULTS:
+:results:
+:end:
+
+* Learning Curves -- Using Deterministically Random Cross Validation
+First, 5-fold cross-validation is performed (with random internal
+shuffling) to get a sense of how the dataset lends itself to the
+architecture as a whole.
+#+begin_src jupyter-python :exports results :results raw drawer
+  kf_lc = KFold(n_splits=10, shuffle=True, random_state=111)
+#+end_src
+
+#+RESULTS:
+:results:
+:end:
+
+Every splitter will always perform internal shuffling of the
+data. This helps to prevent the model from training on the ordered
+groupings in the dataset. For the learning curves, the splitter is
+initialized with a deterministic random state. This ensures that each
+fold generated at each split fraction in the learning curve is not
+only comparable to the others in it's section, but to those in
+neighboring splits as well (the shuffling occurs before the splitting
+in each case)
+
+In the future, when performing hyperparameter optimization, the cv
+splitters used will use the global random state. This will help to
+ensure that the shuffle seen by the myriad validation folds will not
+be treated itself as a hyperparameter to be optimized. The final model
+should therefore be robust to the order of data.
+
+Again, after the learning curve analysis, the "real" pipeline will
+always terminate in a regressor based on the global random state.
+
+#+begin_src jupyter-python :exports results :results raw drawer
+  LC = pvc(learning_curve, LCpipe, mc, my.PBE_bg_eV, train_sizes=np.linspace(0.1, 0.9, 9), cv=kf_lc, scoring=scorings)
+  LC = LC.melt(id_vars=["partition"], ignore_index=False).reset_index()
+#+end_src
+
+#+RESULTS:
+:results:
+:end:
+
+Notice that the error metrics are negated so that, consistently with
+the R^2 and ev scores, the greater the number, the better the model
+performs.
+
+#+begin_src jupyter-python :exports results :results raw drawer :file ./LearningCurves/rfr.png
+  p = sns.FacetGrid(LC, col="score", hue="partition", col_wrap=3, sharey=False)
+  p.map(sns.lineplot, "train_sizes", "value")
+  p.add_legend()
+#+end_src
+
+#+RESULTS:
+:results:
+: <seaborn.axisgrid.FacetGrid at 0x7fedca633b50>
+[[file:./LearningCurves/rfr.png]]
+:end:
+
+Apparently, the PBE band gap is readily learnable by a random forest
+trained on composition.  However, the fitted model does not generalize
+well to the rest of the data until at least 270 random points have
+been seen.
+
+* Make Dedicated Test Train Split
+At this point, with a sense of how much data is necessary to give the
+model a chance, a dedicated test-train split is made. This split
+preserves the proportion of each alloy group in the test and train
+partitions, which helps with the final model evaluation. Beyond this
+point, all decisions about model optimization will be made using only
+the dedicated training partition. The test partition will be reserved
+until a final model pipeline is parametrized and fit. Then, the
+predictions made on the test partition will either confirm or deny the
+model's ability to work outside of the training domain.
+
+#+begin_src jupyter-python :exports results :results raw drawer
+  sss = StratifiedShuffleSplit(n_splits=1, train_size=0.8, random_state=None)
+  train_idx, test_idx = next(sss.split(mc, mixcat)) #stratify split by mix categories
+  mc_tr, mc_ts = mc.iloc[train_idx], mc.iloc[test_idx]
+  my_tr, my_ts = my.iloc[train_idx], my.iloc[test_idx]
+  mixcat_tr, mixcat_ts = mixcat.iloc[train_idx], mixcat.iloc[test_idx]
+#+end_src
+
+#+RESULTS:
+:results:
+:end:
+
+* Grouping Cross Validation Baseline
+The four main alloy classes are similarly represented in the dataset,
+So, it is interesting to know if a model trained on only three of them
+performs well on the fourth.
+
+To aid in this, the unrefined model, trained on 80% is tested on a
+group-wise cross-validation k-fold split to get a baseline
+performance. The final refined model will be tested in the same way,
+but using the dedicated test split. Of all the architectures
+developed, architecture that performs best in this final evaluation
+will go on to serve as the genetic algorithm's surrogate
+#+begin_src jupyter-python :exports results :results raw drawer
+  gkf = GroupKFold(n_splits=4)
+#+end_src
+
+#+RESULTS:
+:results:
+:end:
+
+Another 5-fold cross-validation is performed using group splits to get
+a sense of how the model generalizes to unseen alloy classes on
+average when trained on the rest.
+#+begin_src jupyter-python :exports results :results raw drawer
+  scores = []
+  for train_idx, val_idx in gkf.split(mc_tr, my_tr, groups=mixcat_tr):
+      val_group_names = mixcat_tr.iloc[val_idx].index.get_level_values("mix").unique()
+      cpipe.fit(mc_tr.iloc[train_idx], my_tr.iloc[train_idx].PBE_bg_eV)
+      score_series = pd.Series(batch_score(cpipe, mc_tr.iloc[val_idx], my_tr.iloc[val_idx].PBE_bg_eV, **scorings))
+      score_series.name="_&_".join(val_group_names)
+      scores.append(score_series)
+  baseline_group_scores = pd.concat(list(map(pd.Series, scores)), axis=1)
+  baseline_group_scores
+#+end_src
+
+#+RESULTS:
+:results:
+|            | B         | X         | A         | pure_&_BandX |
+|------------+-----------+-----------+-----------+--------------|
+| r2         | 0.454785  | 0.911031  | 0.763740  | 0.801128     |
+| ev         | 0.498890  | 0.946562  | 0.832467  | 0.803488     |
+| maxerr     | -1.895700 | -1.118320 | -1.696680 | -1.703385    |
+| rmse       | -0.788231 | -0.404942 | -0.601310 | -0.614014    |
+| A_rmse     | -0.788231 | -0.404942 | -0.601310 | -0.614014    |
+| B_rmse     | -0.788231 | -0.404942 | -0.601310 | -0.614014    |
+| X_rmse     | -0.788231 | -0.404942 | -0.601310 | -0.614014    |
+| BandX_rmse | -0.788231 | -0.404942 | -0.601310 | -0.148095    |
+| Pure_rmse  | -0.788231 | -0.404942 | -0.601310 | -0.629873    |
+:end:
+
+Note: batch_score defaults to unweighted scoring if the sum of weights
+in the given sample equal zero.
+
+* Optimize Hyper-parameters for Composition Model
+** define first level of Hyperparameter search
+Note that the estimator used in this cross validated search uses the
+default random state generator. Internally, this means that each
+fitted estimator instance is definitely different from the
+others. This helps ensure that the parameters selected are robust
+against the random initialization of the model architecture.
+
+These cells archive the optimization process, running them will only
+serve to illustrate the process taken to pick the parameters that
+moved on to the following iterations.
+*** 1. construct original Hyper-parameter Space
 #+begin_src jupyter-python :exports results :results raw drawer
   #"max_depth": [10, 20, 40],
   #"min_samples_split": [2, 5, 10]
-  RFRgrid = [
+  grid = [
       {'normalizer__norm': ['l1', 'l2', 'max'],
        'randomforestregressor__bootstrap': [True], #build each tree from sample
        'randomforestregressor__ccp_alpha': [0.0, 0.5, 1.0], #cost-complexity pruning
@@ -172,89 +488,920 @@ Normalize each sampled composition prior to regression
   ]
 #+end_src
 
-** 2. Composition model of PBE_BG
+#+RESULTS:
+:results:
+:end:
+
+*** 2. Composition model of PBE_BG
+--> change all the variable names to be neutral so that the notebook copying is less hassle
 #+begin_src jupyter-python :exports results :results raw drawer :async yes
-  site_mse = PSA(mean_squared_error).score
-  RFRscoring = {'r2': make_scorer(r2_score),
-                'ev': make_scorer(explained_variance_score),
-                'maxerr': make_scorer(max_error, greater_is_better=False),
-                'rmse': make_scorer(mean_squared_error, greater_is_better=False, squared=False),
-                'A_rmse': make_scorer(site_mse, greater_is_better=False,
-                                      squared=False, sample_weight=mixcat.A),
-                'B_rmse': make_scorer(site_mse, greater_is_better=False,
-                                      squared=False, sample_weight=mixcat.B),
-                'X_rmse': make_scorer(site_mse, greater_is_better=False,
-                                      squared=False, sample_weight=mixcat.X),
-                'BandX_rmse': make_scorer(site_mse, greater_is_better=False,
-                                          squared=False, sample_weight=mixcat.BandX),
-                'Pure_rmse': make_scorer(mean_squared_error, greater_is_better=False,
-                                         squared=False, sample_weight=mixcat.pure),}
-  
-  crfr = gsCV(estimator=cpipeRFR,
-              param_grid=RFRgrid,
-              cv=3, verbose=1, scoring=RFRscoring, refit="r2", return_train_score=True)
-  crfr.fit(mc_tr, my_tr.PBE_bg_eV)
+  cgs = gsCV(estimator=cpipe,
+              param_grid=grid,
+              cv=3, verbose=1, scoring=scorings, refit="r2", return_train_score=True)
+  cgs.fit(mc_tr, my_tr.PBE_bg_eV)
 #+end_src
-** 3. Determine next Grid Space to explore
-#+begin_src jupyter-python :exports results :results raw drawer :async yes :pandoc org
-  summary, next_grid = summarize_HPO(rfr, RFRgrid, topN=10, metric_weights=[1,1,1,1], strategy="oavg")
+
+#+RESULTS:
+:results:
+#+begin_example
+  GridSearchCV(cv=3,
+               estimator=Pipeline(steps=[('simpleimputer',
+                                          SimpleImputer(fill_value=0.0,
+                                                        strategy='constant')),
+                                         ('normalizer', Normalizer()),
+                                         ('randomforestregressor',
+                                          RandomForestRegressor())]),
+               param_grid=[{'normalizer__norm': ['l1', 'l2', 'max'],
+                            'randomforestregressor__bootstrap': [True],
+                            'randomforestregressor__ccp_alpha': [0.0, 0.5, 1.0],
+                            'randomforestregr...
+  324    MACa0.125Pb0.875I3              2x2x2       0
+  193    MABa0.25Pb0.75I3                2x2x2       0
+  117    Rb0.125Cs0.875GeI3              2x2x2       0
+  47     CsBaCl3                         2x2x2       0
+  173    K0.375Cs0.25MA0.375SrCl3        2x2x2       0
+  Name: X, Length: 396, dtype: uint8),
+                        'ev': make_scorer(explained_variance_score),
+                        'maxerr': make_scorer(max_error, greater_is_better=False),
+                        'r2': make_scorer(r2_score),
+                        'rmse': make_scorer(mean_squared_error, greater_is_better=False, squared=False)},
+               verbose=1)
+#+end_example
+:end:
+
+*** 3. Determine next Grid Space to explore
+#+begin_src jupyter-python :exports results :results raw drawer
+  summary, next_grid = summarize_HPO(cgs, grid, topN=10, metric_weights=[1,1,1,1,1,1,1,0,1], strategy="oavg")
   summary
 #+end_src
 
-* BG -- Iteratively Optimize Hyperparameters
-** 1. construct subsequent HP space
-#+begin_src jupyter-python :exports results :results raw drawer :async yes :pandoc org
-  RFRgrid = [
+#+RESULTS:
+:results:
+|                                                 | space_0         | space_1         | entropy_0 | entropy_1 | scores_0             | scores_1             | next_0    | next_1    |
+|-------------------------------------------------+-----------------+-----------------+-----------+-----------+----------------------+----------------------+-----------+-----------|
+| normalizer__norm                                | [l1, l2, max]   | [l1, l2, max]   | 1.055142  | 1.055142  | [12.59, 9.9, 10.84]  | [12.59, 9.9, 10.84]  | [l1]      | [l1]      |
+| randomforestregressor__bootstrap                | [True]          | [False]         | 0.255734  | 0.362985  | [22.16]              | [11.16]              | [True]    | [False]   |
+| randomforestregressor__ccp_alpha                | [0.0, 0.5, 1.0] | [0.0, 0.5, 1.0] | -0.000000 | -0.000000 | NaN                  | NaN                  | [0.0]     | [0.0]     |
+| randomforestregressor__criterion                | [mse]           | [mse]           | -0.000000 | -0.000000 | NaN                  | NaN                  | [mse]     | [mse]     |
+| randomforestregressor__max_depth                | [None]          | [None]          | -0.000000 | -0.000000 | NaN                  | NaN                  | [None]    | [None]    |
+| randomforestregressor__max_features             | [auto, sqrt, 3] | [auto, sqrt, 3] | 1.086264  | 1.086264  | [18.06, 8.28, 6.98]  | [18.06, 8.28, 6.98]  | [auto]    | [auto]    |
+| randomforestregressor__max_leaf_nodes           | [None]          | [None]          | -0.000000 | -0.000000 | NaN                  | NaN                  | [None]    | [None]    |
+| randomforestregressor__max_samples              | [0.9, 0.6, 0.3] | [None]          | 0.907119  | 0.362985  | [15.71, 5.97, 0.48]  | [11.16]              | [0.9]     | [None]    |
+| randomforestregressor__min_impurity_decrease    | [0.0]           | [0.0]           | -0.000000 | -0.000000 | NaN                  | NaN                  | [0.0]     | [0.0]     |
+| randomforestregressor__min_impurity_split       | [None]          | [None]          | -0.000000 | -0.000000 | NaN                  | NaN                  | [None]    | [None]    |
+| randomforestregressor__min_samples_leaf         | [1]             | [1]             | -0.000000 | -0.000000 | NaN                  | NaN                  | [1]       | [1]       |
+| randomforestregressor__min_samples_split        | [2]             | [2]             | -0.000000 | -0.000000 | NaN                  | NaN                  | [2]       | [2]       |
+| randomforestregressor__min_weight_fraction_leaf | [0.0]           | [0.0]           | -0.000000 | -0.000000 | NaN                  | NaN                  | [0.0]     | [0.0]     |
+| randomforestregressor__n_estimators             | [20, 50, 100]   | [20, 50, 100]   | 1.027844  | 1.027844  | [3.75, 14.34, 15.23] | [3.75, 14.34, 15.23] | [50, 100] | [50, 100] |
+| randomforestregressor__n_jobs                   | [4]             | [4]             | -0.000000 | -0.000000 | NaN                  | NaN                  | [4]       | [4]       |
+| randomforestregressor__oob_score                | [True]          | NaN             | 0.255734  | NaN       | [22.16]              | NaN                  | [True]    | NaN       |
+| randomforestregressor__random_state             | [None]          | [None]          | -0.000000 | -0.000000 | NaN                  | NaN                  | [None]    | [None]    |
+| randomforestregressor__verbose                  | [0]             | [0]             | -0.000000 | -0.000000 | NaN                  | NaN                  | [0]       | [0]       |
+| randomforestregressor__warm_start               | [False]         | [False]         | -0.000000 | -0.000000 | NaN                  | NaN                  | [False]   | [False]   |
+:end:
+** -- Iteratively Optimize Hyperparameters
+*** 1. construct subsequent HP space
+#+begin_src jupyter-python :exports results :results raw drawer
+  grid = [
       {'normalizer__norm': ['l1'],
        'randomforestregressor__bootstrap': [True],
        'randomforestregressor__ccp_alpha': [0.0],
        'randomforestregressor__criterion': ['mse'],
        'randomforestregressor__max_depth': [None],
-       'randomforestregressor__max_features': ['auto', 'sqrt'],
+       'randomforestregressor__max_features': ['auto'],
        'randomforestregressor__max_leaf_nodes': [None],
-       'randomforestregressor__max_samples': [0.9],
+       'randomforestregressor__max_samples': [0.9, 0.8],
        'randomforestregressor__min_impurity_decrease': [0.0],
        'randomforestregressor__min_impurity_split': [None],
        'randomforestregressor__min_samples_leaf': [1],
        'randomforestregressor__min_samples_split': [2],
        'randomforestregressor__min_weight_fraction_leaf': [0.0],
-       'randomforestregressor__n_estimators': [50],
+       'randomforestregressor__n_estimators': [50, 100, 150],
        'randomforestregressor__n_jobs': [4],
        'randomforestregressor__oob_score': [True],
        'randomforestregressor__random_state': [None],
        'randomforestregressor__verbose': [0],
        'randomforestregressor__warm_start': [False]},
-      {'normalizer__norm': ['l1'],
-       'randomforestregressor__bootstrap': [False],
-       'randomforestregressor__ccp_alpha': [0.0],
-       'randomforestregressor__criterion': ['mse'],
-       'randomforestregressor__max_depth': [None],
-       'randomforestregressor__max_features': ['auto', 'sqrt'],
-       'randomforestregressor__max_leaf_nodes': [None],
-       'randomforestregressor__max_samples': [None],
-       'randomforestregressor__min_impurity_decrease': [0.0],
-       'randomforestregressor__min_impurity_split': [None],
-       'randomforestregressor__min_samples_leaf': [1],
-       'randomforestregressor__min_samples_split': [2],
-       'randomforestregressor__min_weight_fraction_leaf': [0.0],
-       'randomforestregressor__n_estimators': [50],
-       'randomforestregressor__n_jobs': [4],
-       'randomforestregressor__random_state': [None],
-       'randomforestregressor__verbose': [0],
-       'randomforestregressor__warm_start': [False]}
   ]
 #+end_src
 
-* compute property descriptors
-** create relational table
+#+RESULTS:
+:results:
+:end:
+
+*** 2. Composition model of PBE_BG
+#+begin_src jupyter-python :exports results :results raw drawer :async yes
+  site_mse = PSA(mean_squared_error).score
+  scorings = {'r2': make_scorer(r2_score),
+                'ev': make_scorer(explained_variance_score),
+                'maxerr': make_scorer(max_error, greater_is_better=False),
+                'rmse': make_scorer(mean_squared_error, greater_is_better=False, squared=False),
+                'A_rmse': make_scorer(site_mse, greater_is_better=False,
+                                      squared=False, sample_weight=mixweight.A),
+                'B_rmse': make_scorer(site_mse, greater_is_better=False,
+                                      squared=False, sample_weight=mixweight.B),
+                'X_rmse': make_scorer(site_mse, greater_is_better=False,
+                                      squared=False, sample_weight=mixweight.X),
+                'BandX_rmse': make_scorer(site_mse, greater_is_better=False,
+                                          squared=False, sample_weight=mixweight.BandX),
+                'Pure_rmse': make_scorer(site_mse, greater_is_better=False,
+                                         squared=False, sample_weight=mixweight.pure),}
+
+  cgs = gsCV(estimator=cpipe,
+              param_grid=grid,
+              cv=3, verbose=1, scoring=scorings, refit="r2", return_train_score=True)
+  cgs.fit(mc_tr, my_tr.PBE_bg_eV)
+#+end_src
+
+#+RESULTS:
+:results:
+#+begin_example
+  [INFO] 2022-04-12 13:32:34 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:34 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:34 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:34 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:34 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:34 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:34 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:34 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:34 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:34 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  Fitting 3 folds for each of 6 candidates, totalling 18 fits
+  [INFO] 2022-04-12 13:32:35 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:35 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:35 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:35 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:35 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:35 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:35 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:35 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:35 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:35 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:35 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:35 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:35 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:35 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:35 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:35 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:35 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:35 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:35 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:35 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:35 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:35 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:35 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:35 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:35 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:35 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:35 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:35 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:35 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:35 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:35 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:35 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:35 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:35 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:35 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:35 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:35 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:35 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:35 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:35 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:35 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:35 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:36 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:36 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 13:32:36 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+#+end_example
+#+begin_example
+  GridSearchCV(cv=3,
+               estimator=Pipeline(steps=[('simpleimputer',
+                                          SimpleImputer(fill_value=0.0,
+                                                        strategy='constant')),
+                                         ('normalizer', Normalizer()),
+                                         ('randomforestregressor',
+                                          RandomForestRegressor())]),
+               param_grid=[{'normalizer__norm': ['l1'],
+                            'randomforestregressor__bootstrap': [True],
+                            'randomforestregressor__ccp_alpha': [0.0],
+                            'randomforestregressor__criterion': [...
+  324    MACa0.125Pb0.875I3              2x2x2       0
+  193    MABa0.25Pb0.75I3                2x2x2       0
+  117    Rb0.125Cs0.875GeI3              2x2x2       0
+  47     CsBaCl3                         2x2x2       0
+  173    K0.375Cs0.25MA0.375SrCl3        2x2x2       0
+  Name: X, Length: 396, dtype: uint8),
+                        'ev': make_scorer(explained_variance_score),
+                        'maxerr': make_scorer(max_error, greater_is_better=False),
+                        'r2': make_scorer(r2_score),
+                        'rmse': make_scorer(mean_squared_error, greater_is_better=False, squared=False)},
+               verbose=1)
+#+end_example
+:end:
+
+*** 3. Determine next Grid Space to explore
 #+begin_src jupyter-python :exports results :results raw drawer
-  mrel = mc.reset_index().melt(id_vars=maincomp.index.names).dropna(axis=0, subset="value")
-  mrel = mrel.set_index(mc.index.names, append=False)
-  erel = empcomp.reset_index().melt(id_vars=empcomp.index.names).dropna(axis=0, subset="value")
+  summary, next_grid = summarize_HPO(cgs, grid, topN=10, metric_weights=[1,1,1,1,1,1,1,0,1], strategy="oavg")
+  summary
+#+end_src
+
+#+RESULTS:
+:results:
+|                                                 | space_0        | entropy_0 | scores_0          | next_0  |
+|-------------------------------------------------+----------------+-----------+-------------------+---------|
+| normalizer__norm                                | [l1]           | -0.000000 | NaN               | [l1]    |
+| randomforestregressor__bootstrap                | [True]         | -0.000000 | NaN               | [True]  |
+| randomforestregressor__ccp_alpha                | [0.0]          | -0.000000 | NaN               | [0.0]   |
+| randomforestregressor__criterion                | [mse]          | -0.000000 | NaN               | [mse]   |
+| randomforestregressor__max_depth                | [None]         | -0.000000 | NaN               | [None]  |
+| randomforestregressor__max_features             | [auto]         | -0.000000 | NaN               | [auto]  |
+| randomforestregressor__max_leaf_nodes           | [None]         | -0.000000 | NaN               | [None]  |
+| randomforestregressor__max_samples              | [0.9, 0.8]     | 0.693147  | [11.73, 8.87]     | [0.9]   |
+| randomforestregressor__min_impurity_decrease    | [0.0]          | -0.000000 | NaN               | [0.0]   |
+| randomforestregressor__min_impurity_split       | [None]         | -0.000000 | NaN               | [None]  |
+| randomforestregressor__min_samples_leaf         | [1]            | -0.000000 | NaN               | [1]     |
+| randomforestregressor__min_samples_split        | [2]            | -0.000000 | NaN               | [2]     |
+| randomforestregressor__min_weight_fraction_leaf | [0.0]          | -0.000000 | NaN               | [0.0]   |
+| randomforestregressor__n_estimators             | [50, 100, 150] | 1.098612  | [6.4, 5.25, 8.95] | [150]   |
+| randomforestregressor__n_jobs                   | [4]            | -0.000000 | NaN               | [4]     |
+| randomforestregressor__oob_score                | [True]         | -0.000000 | NaN               | [True]  |
+| randomforestregressor__random_state             | [None]         | -0.000000 | NaN               | [None]  |
+| randomforestregressor__verbose                  | [0]            | -0.000000 | NaN               | [0]     |
+| randomforestregressor__warm_start               | [False]        | -0.000000 | NaN               | [False] |
+:end:
+** -- Iteratively Optimize Hyperparameters
+*** 1. construct subsequent HP space
+#+begin_src jupyter-python :exports results :results raw drawer
+  grid = [
+      {'normalizer__norm': ['l1'],
+       'randomforestregressor__bootstrap': [True],
+       'randomforestregressor__ccp_alpha': [0.0, 0.001, 0.0015],
+       'randomforestregressor__criterion': ['mse'],
+       'randomforestregressor__max_depth': [None],
+       'randomforestregressor__max_features': ['auto'],
+       'randomforestregressor__max_leaf_nodes': [None],
+       'randomforestregressor__max_samples': [0.9, 0.8],
+       'randomforestregressor__min_impurity_decrease': [0.0],
+       'randomforestregressor__min_impurity_split': [None],
+       'randomforestregressor__min_samples_leaf': [1],
+       'randomforestregressor__min_samples_split': [2, 5, 10, 15],
+       'randomforestregressor__min_weight_fraction_leaf': [0.0],
+       'randomforestregressor__n_estimators': [100, 150],
+       'randomforestregressor__n_jobs': [4],
+       'randomforestregressor__oob_score': [True],
+       'randomforestregressor__random_state': [None],
+       'randomforestregressor__verbose': [0],
+       'randomforestregressor__warm_start': [False]},
+  ]
+#+end_src
+
+#+RESULTS:
+:results:
+:end:
+
+*** 2. Composition model of PBE_BG
+#+begin_src jupyter-python :exports results :results raw drawer :async yes
+  site_mse = PSA(mean_squared_error).score
+  scorings = {'r2': make_scorer(r2_score),
+                'ev': make_scorer(explained_variance_score),
+                'maxerr': make_scorer(max_error, greater_is_better=False),
+                'rmse': make_scorer(mean_squared_error, greater_is_better=False, squared=False),
+                'A_rmse': make_scorer(site_mse, greater_is_better=False,
+                                      squared=False, sample_weight=mixweight.A),
+                'B_rmse': make_scorer(site_mse, greater_is_better=False,
+                                      squared=False, sample_weight=mixweight.B),
+                'X_rmse': make_scorer(site_mse, greater_is_better=False,
+                                      squared=False, sample_weight=mixweight.X),
+                'BandX_rmse': make_scorer(site_mse, greater_is_better=False,
+                                          squared=False, sample_weight=mixweight.BandX),
+                'Pure_rmse': make_scorer(site_mse, greater_is_better=False,
+                                         squared=False, sample_weight=mixweight.pure),}
+
+  cgs = gsCV(estimator=cpipe,
+              param_grid=grid,
+              cv=3, verbose=1, scoring=scorings, refit="r2", return_train_score=True)
+  cgs.fit(mc_tr, my_tr.PBE_bg_eV)
+#+end_src
+
+#+RESULTS:
+:results:
+#+begin_example
+  [INFO] 2022-04-12 14:58:49 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:49 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:49 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:49 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:49 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:49 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:49 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:49 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:49 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  Fitting 3 folds for each of 48 candidates, totalling 144 fits
+  [INFO] 2022-04-12 14:58:49 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:49 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:49 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:49 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:50 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:50 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:50 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:50 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:50 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:50 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:50 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:50 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:50 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:50 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:50 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:50 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:50 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:50 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:50 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:50 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:50 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:50 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:50 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:50 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:50 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:50 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:50 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:50 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:50 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:50 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:50 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:50 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:50 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:50 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:50 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:50 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:50 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:50 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:50 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:50 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:50 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:50 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:50 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:50 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:50 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:51 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:51 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:51 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:51 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:51 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:51 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:51 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:51 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:51 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:51 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:51 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:51 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:51 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:51 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:51 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:51 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:51 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:51 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:51 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:51 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:51 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:51 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:51 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:51 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:51 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:51 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:51 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:51 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:51 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:51 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:51 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:51 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:51 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:51 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:51 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:51 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:51 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:51 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:51 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:51 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:51 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:51 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:51 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:52 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:53 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:53 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  [INFO] 2022-04-12 14:58:53 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:54 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:54 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:54 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:54 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:54 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:54 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:54 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:54 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:54 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:54 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:54 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:54 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:55 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:55 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:55 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:55 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:55 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:55 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:55 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:55 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:55 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:55 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:55 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:55 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:56 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:56 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:56 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:56 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:56 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:56 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:56 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:56 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:56 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:56 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:56 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:56 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:56 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:57 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:57 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:57 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:57 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:57 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:57 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:57 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:57 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:57 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:57 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:57 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:57 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:57 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:57 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:58 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:58 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:58 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:58 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:58 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:58 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:58 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:58 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:58 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:58 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:58 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:58 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:58 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:58 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:58 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:59 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:59 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:59 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:59 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:59 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:59 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:59 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:59 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:59 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:59 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:59 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:59 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:58:59 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:00 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:00 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:00 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:00 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:00 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:00 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:00 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:00 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:00 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:00 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:00 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:00 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:00 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:00 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:01 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:01 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:01 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:01 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:01 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:01 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:01 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:01 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:01 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:01 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:01 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:01 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:01 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:02 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:02 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:02 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:02 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:02 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:02 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:02 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:02 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:02 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:02 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:02 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:02 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:02 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:02 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:03 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:03 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:03 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:03 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:03 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:03 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:03 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:03 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:03 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:03 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:03 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:03 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:03 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:03 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:03 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:04 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:04 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:04 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:04 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:04 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:04 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:04 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:04 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:05 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:05 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:05 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:05 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:05 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:05 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:05 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:05 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:05 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:05 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:05 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:06 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:06 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:06 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:06 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:06 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:06 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:06 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:06 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:06 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:06 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:06 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:07 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:07 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:07 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:07 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:07 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:07 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:07 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:07 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:07 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:07 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:07 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:07 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:08 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:08 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:08 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:08 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:08 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:08 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:08 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:08 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:08 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:08 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:08 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:08 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:09 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:09 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:09 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:09 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:09 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:09 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:09 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:09 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:09 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:09 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:09 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:10 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:10 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:10 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:10 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:10 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:10 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:10 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:10 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:10 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:10 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:10 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:11 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:11 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:11 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:11 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:11 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:11 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:11 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:11 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:11 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:11 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:11 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:11 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:11 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:12 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:12 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:12 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:12 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:12 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:12 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:12 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:12 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:12 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:12 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:13 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:13 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:13 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:13 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:13 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:13 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:13 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:13 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:13 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:13 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:13 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:13 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:14 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:14 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:14 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:14 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:14 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:14 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:14 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:14 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:14 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:14 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:14 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:14 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:14 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:14 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:15 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:15 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:15 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:15 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:15 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:15 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:15 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:15 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:15 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:15 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:16 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:16 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:16 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:16 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:16 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:16 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:16 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:16 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:16 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:16 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:16 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:16 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:17 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:17 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:17 - sklearn.ensemble.RandomForestRegressor.fit: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:17 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:17 - sklearn.ensemble.RandomForestRegressor.predict: fallback to original Scikit-learn
+  [INFO] 2022-04-12 14:59:17 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+#+end_example
+#+begin_example
+  GridSearchCV(cv=3,
+               estimator=Pipeline(steps=[('simpleimputer',
+                                          SimpleImputer(fill_value=0.0,
+                                                        strategy='constant')),
+                                         ('normalizer', Normalizer()),
+                                         ('randomforestregressor',
+                                          RandomForestRegressor())]),
+               param_grid=[{'normalizer__norm': ['l1'],
+                            'randomforestregressor__bootstrap': [True],
+                            'randomforestregressor__ccp_alpha': [0.0, 0.001,
+                                                                 0.0015],
+                            'randomforestregressor_...
+  324    MACa0.125Pb0.875I3              2x2x2       0
+  193    MABa0.25Pb0.75I3                2x2x2       0
+  117    Rb0.125Cs0.875GeI3              2x2x2       0
+  47     CsBaCl3                         2x2x2       0
+  173    K0.375Cs0.25MA0.375SrCl3        2x2x2       0
+  Name: X, Length: 396, dtype: uint8),
+                        'ev': make_scorer(explained_variance_score),
+                        'maxerr': make_scorer(max_error, greater_is_better=False),
+                        'r2': make_scorer(r2_score),
+                        'rmse': make_scorer(mean_squared_error, greater_is_better=False, squared=False)},
+               verbose=1)
+#+end_example
+:end:
+
+*** 3. Determine next Grid Space to explore
+#+begin_src jupyter-python :exports results :results raw drawer
+  summary, next_grid = summarize_HPO(cgs, grid, topN=10, metric_weights=[1,1,1,1,1,1,1,0,1], strategy="oavg")
+  summary
+#+end_src
+
+#+RESULTS:
+:results:
+|                                                 | space_0              | entropy_0 | scores_0                | next_0  |
+|-------------------------------------------------+----------------------+-----------+-------------------------+---------|
+| normalizer__norm                                | [l1]                 | -0.000000 | NaN                     | [l1]    |
+| randomforestregressor__bootstrap                | [True]               | -0.000000 | NaN                     | [True]  |
+| randomforestregressor__ccp_alpha                | [0.0, 0.001, 0.0015] | 1.021728  | [21.61, 5.65, 3.16]     | [0.0]   |
+| randomforestregressor__criterion                | [mse]                | -0.000000 | NaN                     | [mse]   |
+| randomforestregressor__max_depth                | [None]               | -0.000000 | NaN                     | [None]  |
+| randomforestregressor__max_features             | [auto]               | -0.000000 | NaN                     | [auto]  |
+| randomforestregressor__max_leaf_nodes           | [None]               | -0.000000 | NaN                     | [None]  |
+| randomforestregressor__max_samples              | [0.9, 0.8]           | 0.669328  | [16.12, 14.29]          | [0.9]   |
+| randomforestregressor__min_impurity_decrease    | [0.0]                | -0.000000 | NaN                     | [0.0]   |
+| randomforestregressor__min_impurity_split       | [None]               | -0.000000 | NaN                     | [None]  |
+| randomforestregressor__min_samples_leaf         | [1]                  | -0.000000 | NaN                     | [1]     |
+| randomforestregressor__min_samples_split        | [2, 5, 10, 15]       | 1.024296  | [18.86, 7.4, 4.15, 0.0] | [2]     |
+| randomforestregressor__min_weight_fraction_leaf | [0.0]                | -0.000000 | NaN                     | [0.0]   |
+| randomforestregressor__n_estimators             | [100, 150]           | 0.692202  | [12.26, 18.15]          | [150]   |
+| randomforestregressor__n_jobs                   | [4]                  | -0.000000 | NaN                     | [4]     |
+| randomforestregressor__oob_score                | [True]               | -0.000000 | NaN                     | [True]  |
+| randomforestregressor__random_state             | [None]               | -0.000000 | NaN                     | [None]  |
+| randomforestregressor__verbose                  | [0]                  | -0.000000 | NaN                     | [0]     |
+| randomforestregressor__warm_start               | [False]              | -0.000000 | NaN                     | [False] |
+:end:
+
+** cross-validate generalizability
+validation curves are plotted for sensitive hyperparameters identified in the preceeding HPO rounds
+*** ccp_alpha
+#+begin_src jupyter-python :exports results :results raw drawer
+  train_scores, valid_scores = validation_curve(
+      cpipe, mc_tr, my_tr.PBE_bg_eV, param_name='randomforestregressor__ccp_alpha', param_range=np.linspace(0.0, 0.002, 2), cv=5)
+#+end_src
+
+#+begin_src jupyter-python :exports results :results raw drawer
+  train_sizes, train_scores, valid_scores = learning_curve(
+      cpipe, mc_tr, my_tr.PBE_bg_eV, train_sizes=np.linspace(0.1, 0.9, 9), cv=5)
+#+end_src
+
+** Best Comp Model Demo
+*** Parametrize
+#+begin_src jupyter-python :exports results :results raw drawer
+  best_bg = {'normalizer__norm': ['l1'],
+             'randomforestregressor__bootstrap': [True],
+             'randomforestregressor__ccp_alpha': [0.0],
+             'randomforestregressor__criterion': ['mse'],
+             'randomforestregressor__max_depth': [None],
+             'randomforestregressor__max_features': ['auto'],
+             'randomforestregressor__max_leaf_nodes': [None],
+             'randomforestregressor__max_samples': [0.9],
+             'randomforestregressor__min_impurity_decrease': [0.0],
+             'randomforestregressor__min_impurity_split': [None],
+             'randomforestregressor__min_samples_leaf': [1],
+             'randomforestregressor__min_samples_split': [2],
+             'randomforestregressor__min_weight_fraction_leaf': [0.0],
+             'randomforestregressor__n_estimators': [150],
+             'randomforestregressor__n_jobs': [4],
+             'randomforestregressor__oob_score': [True],
+             'randomforestregressor__random_state': [None],
+             'randomforestregressor__verbose': [0],
+             'randomforestregressor__warm_start': [False]
+             }
+#+end_src
+
+#+RESULTS:
+:results:
+:end:
+
+*** Train Final Estimator
+- no CV needed
+- no train scores needed
+just fit final pipeline, predict test, score the test data, and
+present performance on canonical test set
+#+begin_src jupyter-python :exports results :results raw drawer
+  fcpipe = cpipe.set_params(**{k:v[0] for k,v in best_bg.items()})
+  fcpipe.fit(mc_tr, my_tr.PBE_bg_eV)
+#+end_src
+
+#+RESULTS:
+:results:
+: [INFO] 2022-04-15 13:01:05 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+: Pipeline(steps=[('simpleimputer',
+:                  SimpleImputer(fill_value=0.0, strategy='constant')),
+:                 ('normalizer', Normalizer(norm='l1')),
+:                 ('randomforestregressor',
+:                  RandomForestRegressor(max_samples=0.9, n_estimators=150,
+:                                        n_jobs=4, oob_score=True))])
+:end:
+
+*** evaluate
+#+begin_src jupyter-python :exports results :results raw drawer
+  p = parityplot(fcpipe, mc_ts, my_ts.PBE_bg_eV.to_frame(), hue="mix", aspect=1.0)
+#+end_src
+
+#+RESULTS:
+: [INFO] 2022-04-15 19:59:49 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+  
+#+begin_src jupyter-python :exports results :results raw drawer
+  p.savefig("./rfr_bg_c.png", transparent=True)
+#+end_src
+
+#+RESULTS:
+:results:
+:end:
+
+#+begin_src jupyter-python :exports results :results raw drawer
+  pd.Series(batch_score(fcpipe, mc_tr, my_tr.PBE_bg_eV, **scorings)).to_frame()
+#+end_src
+
+#+RESULTS:
+:results:
+: [INFO] 2022-04-15 13:47:58 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+: [INFO] 2022-04-15 13:47:58 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+: [INFO] 2022-04-15 13:47:58 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+: [INFO] 2022-04-15 13:47:58 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+: [INFO] 2022-04-15 13:47:58 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+: [INFO] 2022-04-15 13:47:58 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+: [INFO] 2022-04-15 13:47:58 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+: [INFO] 2022-04-15 13:47:58 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+: [INFO] 2022-04-15 13:47:58 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+|            | 0         |
+|------------+-----------|
+| r2         | 0.988562  |
+| ev         | 0.988562  |
+| maxerr     | -0.729858 |
+| rmse       | -0.139806 |
+| A_rmse     | -0.121663 |
+| B_rmse     | -0.193990 |
+| X_rmse     | -0.103218 |
+| BandX_rmse | -0.089398 |
+| Pure_rmse  | -0.096709 |
+:end:
+
+* Site-Averaged Properties
+** compute property descriptors
+:STATUSLOG:
+- State "NEXT"       from              [2022-04-15 Fri 14:06]
+:END:
+*** create relational table
+#+begin_src jupyter-python :exports results :results raw drawer
+  mrel = maincomp.reset_index().melt(id_vars=maincomp.index.names).dropna(subset=["value"])
+  mrel = mrel.set_index(maincomp.index.names, append=False)
+  erel = empcomp.reset_index().melt(id_vars=empcomp.index.names).dropna(subset=["value"])
   erel = erel.set_index(empcomp.index.names, append=False)
 #+end_src
 
-** perform main join
+#+RESULTS:
+
+*** perform main join
 #+begin_src jupyter-python :exports results :results raw drawer
   join = pd.merge(left=mrel, right=lookup, left_on="element", right_on="Formula")
   join = join.set_index(mrel.index)
@@ -270,22 +1417,491 @@ Normalize each sampled composition prior to regression
   mainprop.index=maincomp.index
 #+end_src
 
-** get empprop from mainprop
+#+RESULTS:
+
+*** get focuses from mainprop
 #+begin_src jupyter-python :exports results :results raw drawer
-  empprop = mainprop.reindex(index=empcomp.index)
+  mp = mainprop[mfocus]
+  mp = mp.assign(mix=mix).set_index("mix", append=True)
+  ep = mainprop[efocus]
+  ep = ep.assign(mix=mix).set_index("mix", append=True)
 #+end_src
-* Site-Averaged Properties Models
-** Optimal Model on Properties                                     :B_frame:
-:PROPERTIES:
-:BEAMER_env: frame
+
+#+RESULTS:
+
+** make on test/train split + properties pipeline
+use mys and eys previously prepared
+*** construct pipeline + create test/train splits
+Normalize each sampled composition prior to regression
+#+begin_src jupyter-python :exports results :results raw drawer
+  ppipeRFR = mkpipe(fillna, StandardScaler(), RandomForestRegressor())
+  mp_tr, mp_ts, my_tr, my_ts, mmix_tr, mmix_ts = tts(mp, mys, mmix,
+                                                     train_size=0.8, random_state=0)
+  ep_tr, ep_ts, ey_tr, ey_ts, emix_tr, emix_ts = tts(ep, eys, emix,
+                                                     train_size=0.8, random_state=0)
+#+end_src
+
+#+RESULTS:
+: [INFO] 2022-04-15 15:22:55 - sklearn.model_selection.train_test_split: running accelerated version on CPU
+: [INFO] 2022-04-15 15:22:55 - sklearn.model_selection.train_test_split: fallback to original Scikit-learn
+: [INFO] 2022-04-15 15:22:55 - sklearn.model_selection.train_test_split: fallback to original Scikit-learn
+: [INFO] 2022-04-15 15:22:55 - sklearn.model_selection.train_test_split: running accelerated version on CPU
+: [INFO] 2022-04-15 15:22:55 - sklearn.model_selection.train_test_split: fallback to original Scikit-learn
+: [INFO] 2022-04-15 15:22:55 - sklearn.model_selection.train_test_split: fallback to original Scikit-learn
+
+** Model BG using Combinations of Hyperparameters
+:STATUSLOG:
+- State "INACTIVE"   from "INACTIVE"   [2022-04-15 Fri 15:38]
+- State "INACTIVE"   from              [2022-04-15 Fri 14:53]
 :END:
-StandardScale each prop feature prior to regression
+*** 1. construct original Hyper-parameter Space
 #+begin_src jupyter-python :exports results :results raw drawer
-ppipe = mkpipe(StandardScaler(), RandomForestRegressor())
-
-X_train, X_test, y_train, y_test = train_test_split(maincomp, mys, test_size=0.2, random_state=0)
-
-clf.fit(X_train, y_train)
-print("model score: %.3f" % clf.score(X_test, y_test))
-  cpipe = 
+  #"max_depth": [10, 20, 40],
+  #"min_samples_split": [2, 5, 10]
+  grid = [
+      {'randomforestregressor__bootstrap': [True], #build each tree from sample
+       'randomforestregressor__ccp_alpha': [0.0, 0.0001, 0.0005, 0.001], #cost-complexity pruning
+       'randomforestregressor__criterion': ['mse'], #['squared_error', 'poisson'], #update sklearn and try these
+       'randomforestregressor__max_depth': [None], #investigate dept of constituent trees, limit
+       'randomforestregressor__max_features': ['auto', 'sqrt', 5], #split after considering
+       'randomforestregressor__max_leaf_nodes': [None], #investigate nodularity of trees
+       'randomforestregressor__max_samples': [0.9, 0.6, 0.3], #frac to bag
+       'randomforestregressor__min_impurity_decrease': [0.0],
+       'randomforestregressor__min_impurity_split': [None],
+       'randomforestregressor__min_samples_leaf': [1], #just sensible
+       'randomforestregressor__min_samples_split': [2], #
+       'randomforestregressor__min_weight_fraction_leaf': [0.0], #
+       'randomforestregressor__n_estimators': [20, 50, 100],
+       'randomforestregressor__n_jobs': [4], #parallelize exec
+       'randomforestregressor__oob_score': [True], #use out-of-bag samples to validate (faster)
+       'randomforestregressor__random_state': [None],
+       'randomforestregressor__verbose': [0], 
+       'randomforestregressor__warm_start': [False] #make a new forest every time (honest)
+       },
+      {'randomforestregressor__bootstrap': [False], #Build each tree from everything
+       'randomforestregressor__ccp_alpha': [0.0, 0.5, 1.0], #cost-complexity pruning
+       'randomforestregressor__criterion': ['mse'], #['squared_error', 'poisson'],
+       'randomforestregressor__max_depth': [None], #investigate dept of constituent trees, limit
+       'randomforestregressor__max_features': ['auto', 'sqrt', 5], #split after considering
+       'randomforestregressor__max_leaf_nodes': [None], #investigate nodularity of trees
+       'randomforestregressor__max_samples': [None], #"bag" everything
+       'randomforestregressor__min_impurity_decrease': [0.0],
+       'randomforestregressor__min_impurity_split': [None],
+       'randomforestregressor__min_samples_leaf': [1], #just sensible
+       'randomforestregressor__min_samples_split': [2], #
+       'randomforestregressor__min_weight_fraction_leaf': [0.0], #
+       'randomforestregressor__n_estimators': [20, 50, 100],
+       'randomforestregressor__n_jobs': [4], #parallelize exec
+       #oob score not available
+       'randomforestregressor__random_state': [None],
+       'randomforestregressor__verbose': [0], 
+       'randomforestregressor__warm_start': [False] #make a new forest every time (honest)
+       }
+  ]
 #+end_src
+
+#+RESULTS:
+
+*** 2. Composition model of PBE_BG
+#+begin_src jupyter-python :exports results :results raw drawer :async yes
+  site_mse = PSA(mean_squared_error).score
+  scorings = {'r2': make_scorer(r2_score),
+                'ev': make_scorer(explained_variance_score),
+                'maxerr': make_scorer(max_error, greater_is_better=False),
+                'rmse': make_scorer(mean_squared_error, greater_is_better=False, squared=False),
+                'A_rmse': make_scorer(site_mse, greater_is_better=False,
+                                      squared=False, sample_weight=mixweight.A),
+                'B_rmse': make_scorer(site_mse, greater_is_better=False,
+                                      squared=False, sample_weight=mixweight.B),
+                'X_rmse': make_scorer(site_mse, greater_is_better=False,
+                                      squared=False, sample_weight=mixweight.X),
+                'BandX_rmse': make_scorer(site_mse, greater_is_better=False,
+                                          squared=False, sample_weight=mixweight.BandX),
+                'Pure_rmse': make_scorer(site_mse, greater_is_better=False,
+                                         squared=False, sample_weight=mixweight.pure),}
+
+  prfr = gsCV(estimator=ppipeRFR,
+              param_grid=grid,
+              cv=3, verbose=1, scoring=scorings, refit="r2", return_train_score=True)
+  prfr.fit(mp_tr, my_tr.PBE_bg_eV)
+#+end_src
+
+#+RESULTS:
+:results:
+#+begin_example
+  GridSearchCV(cv=3,
+               estimator=Pipeline(steps=[('simpleimputer',
+                                          SimpleImputer(fill_value=0.0,
+                                                        strategy='constant')),
+                                         ('standardscaler', StandardScaler()),
+                                         ('randomforestregressor',
+                                          RandomForestRegressor())]),
+               param_grid=[{'randomforestregressor__bootstrap': [True],
+                            'randomforestregressor__ccp_alpha': [0.0, 0.0001,
+                                                                 0.0005, 0.001],
+                            'randomforestregressor__criterion'...
+  324    MACa0.125Pb0.875I3              2x2x2       0
+  193    MABa0.25Pb0.75I3                2x2x2       0
+  117    Rb0.125Cs0.875GeI3              2x2x2       0
+  47     CsBaCl3                         2x2x2       0
+  173    K0.375Cs0.25MA0.375SrCl3        2x2x2       0
+  Name: X, Length: 396, dtype: uint8),
+                        'ev': make_scorer(explained_variance_score),
+                        'maxerr': make_scorer(max_error, greater_is_better=False),
+                        'r2': make_scorer(r2_score),
+                        'rmse': make_scorer(mean_squared_error, greater_is_better=False, squared=False)},
+               verbose=1)
+#+end_example
+:end:
+
+*** 3. Determine next Grid Space to explore
+#+begin_src jupyter-python :exports results :results raw drawer
+  summary, next_grid = summarize_HPO(prfr, grid, topN=10, metric_weights=[1,1,1,1,1,1,1,0,1], strategy="oavg")
+  summary
+#+end_src
+
+#+RESULTS:
+:results:
+|                                                 | space_0                      | space_1         | entropy_0 | entropy_1 | scores_0                  | scores_1             | next_0        | next_1    |
+|-------------------------------------------------+------------------------------+-----------------+-----------+-----------+---------------------------+----------------------+---------------+-----------|
+| randomforestregressor__bootstrap                | [True]                       | [False]         | 0.114193  | 0.256602  | [24.6]                    | [7.7]                | [True]        | [False]   |
+| randomforestregressor__ccp_alpha                | [0.0, 0.0001, 0.0005, 0.001] | [0.0, 0.5, 1.0] | 1.239417  | 0.365027  | [19.01, 8.44, 3.57, 1.28] | [19.01, 0.0, 0.0]    | [0.0, 0.0001] | [0.0]     |
+| randomforestregressor__criterion                | [mse]                        | [mse]           | -0.000000 | -0.000000 | NaN                       | NaN                  | [mse]         | [mse]     |
+| randomforestregressor__max_depth                | [None]                       | [None]          | -0.000000 | -0.000000 | NaN                       | NaN                  | [None]        | [None]    |
+| randomforestregressor__max_features             | [auto, sqrt, 5]              | [auto, sqrt, 5] | 1.088734  | 1.088734  | [5.13, 12.25, 14.92]      | [5.13, 12.25, 14.92] | [sqrt, 5]     | [sqrt, 5] |
+| randomforestregressor__max_leaf_nodes           | [None]                       | [None]          | -0.000000 | -0.000000 | NaN                       | NaN                  | [None]        | [None]    |
+| randomforestregressor__max_samples              | [0.9, 0.6, 0.3]              | [None]          | 0.959754  | 0.256602  | [17.25, 5.71, 1.64]       | [7.7]                | [0.9]         | [None]    |
+| randomforestregressor__min_impurity_decrease    | [0.0]                        | [0.0]           | -0.000000 | -0.000000 | NaN                       | NaN                  | [0.0]         | [0.0]     |
+| randomforestregressor__min_impurity_split       | [None]                       | [None]          | -0.000000 | -0.000000 | NaN                       | NaN                  | [None]        | [None]    |
+| randomforestregressor__min_samples_leaf         | [1]                          | [1]             | -0.000000 | -0.000000 | NaN                       | NaN                  | [1]           | [1]       |
+| randomforestregressor__min_samples_split        | [2]                          | [2]             | -0.000000 | -0.000000 | NaN                       | NaN                  | [2]           | [2]       |
+| randomforestregressor__min_weight_fraction_leaf | [0.0]                        | [0.0]           | -0.000000 | -0.000000 | NaN                       | NaN                  | [0.0]         | [0.0]     |
+| randomforestregressor__n_estimators             | [20, 50, 100]                | [20, 50, 100]   | 1.079230  | 1.079230  | [7.64, 11.35, 13.31]      | [7.64, 11.35, 13.31] | [50, 100]     | [50, 100] |
+| randomforestregressor__n_jobs                   | [4]                          | [4]             | -0.000000 | -0.000000 | NaN                       | NaN                  | [4]           | [4]       |
+| randomforestregressor__oob_score                | [True]                       | NaN             | 0.114193  | NaN       | [24.6]                    | NaN                  | [True]        | NaN       |
+| randomforestregressor__random_state             | [None]                       | [None]          | -0.000000 | -0.000000 | NaN                       | NaN                  | [None]        | [None]    |
+| randomforestregressor__verbose                  | [0]                          | [0]             | -0.000000 | -0.000000 | NaN                       | NaN                  | [0]           | [0]       |
+| randomforestregressor__warm_start               | [False]                      | [False]         | -0.000000 | -0.000000 | NaN                       | NaN                  | [False]       | [False]   |
+:end:
+
+** -- Iteratively Optimize Hyperparameters
+*** 1. construct subsequent HP space
+#+begin_src jupyter-python :exports results :results raw drawer
+  grid = [
+      {'randomforestregressor__bootstrap': [True],
+       'randomforestregressor__ccp_alpha': [0.0, 0.0001, 0.0002],
+       'randomforestregressor__criterion': ['mse'],
+       'randomforestregressor__max_depth': [None],
+       'randomforestregressor__max_features': ['sqrt', 5, 2],
+       'randomforestregressor__max_leaf_nodes': [None],
+       'randomforestregressor__max_samples': [0.9],
+       'randomforestregressor__min_impurity_decrease': [0.0],
+       'randomforestregressor__min_impurity_split': [None],
+       'randomforestregressor__min_samples_leaf': [1],
+       'randomforestregressor__min_samples_split': [2],
+       'randomforestregressor__min_weight_fraction_leaf': [0.0],
+       'randomforestregressor__n_estimators': [50, 100, 150],
+       'randomforestregressor__n_jobs': [4],
+       'randomforestregressor__oob_score': [True],
+       'randomforestregressor__random_state': [None],
+       'randomforestregressor__verbose': [0],
+       'randomforestregressor__warm_start': [False]}
+  ]
+#+end_src
+
+#+RESULTS:
+:results:
+:end:
+
+*** 2. Composition model of PBE_BG
+#+begin_src jupyter-python :exports results :results raw drawer :async yes
+  site_mse = PSA(mean_squared_error).score
+  scorings = {'r2': make_scorer(r2_score),
+                'ev': make_scorer(explained_variance_score),
+                'maxerr': make_scorer(max_error, greater_is_better=False),
+                'rmse': make_scorer(mean_squared_error, greater_is_better=False, squared=False),
+                'A_rmse': make_scorer(site_mse, greater_is_better=False,
+                                      squared=False, sample_weight=mixweight.A),
+                'B_rmse': make_scorer(site_mse, greater_is_better=False,
+                                      squared=False, sample_weight=mixweight.B),
+                'X_rmse': make_scorer(site_mse, greater_is_better=False,
+                                      squared=False, sample_weight=mixweight.X),
+                'BandX_rmse': make_scorer(site_mse, greater_is_better=False,
+                                          squared=False, sample_weight=mixweight.BandX),
+                'Pure_rmse': make_scorer(site_mse, greater_is_better=False,
+                                         squared=False, sample_weight=mixweight.pure),}
+
+  prfr = gsCV(estimator=ppipeRFR,
+              param_grid=grid,
+              cv=3, verbose=1, scoring=scorings, refit="r2", return_train_score=True)
+  prfr.fit(mp_tr, my_tr.PBE_bg_eV)
+#+end_src
+
+#+RESULTS:
+:results:
+#+begin_example
+  GridSearchCV(cv=3,
+               estimator=Pipeline(steps=[('simpleimputer',
+                                          SimpleImputer(fill_value=0.0,
+                                                        strategy='constant')),
+                                         ('standardscaler', StandardScaler()),
+                                         ('randomforestregressor',
+                                          RandomForestRegressor())]),
+               param_grid=[{'randomforestregressor__bootstrap': [True],
+                            'randomforestregressor__ccp_alpha': [0.0, 0.0001,
+                                                                 0.0002],
+                            'randomforestregressor__criterion': ['mse...
+  324    MACa0.125Pb0.875I3              2x2x2       0
+  193    MABa0.25Pb0.75I3                2x2x2       0
+  117    Rb0.125Cs0.875GeI3              2x2x2       0
+  47     CsBaCl3                         2x2x2       0
+  173    K0.375Cs0.25MA0.375SrCl3        2x2x2       0
+  Name: X, Length: 396, dtype: uint8),
+                        'ev': make_scorer(explained_variance_score),
+                        'maxerr': make_scorer(max_error, greater_is_better=False),
+                        'r2': make_scorer(r2_score),
+                        'rmse': make_scorer(mean_squared_error, greater_is_better=False, squared=False)},
+               verbose=1)
+#+end_example
+:end:
+
+*** 3. Determine next Grid Space to explore
+#+begin_src jupyter-python :exports results :results raw drawer
+  summary, next_grid = summarize_HPO(prfr, grid, topN=10, metric_weights=[1,1,1,1,1,1,1,0,1], strategy="oavg")
+  summary
+#+end_src
+
+#+RESULTS:
+:results:
+|                                                 | space_0               | entropy_0 | scores_0             | next_0        |
+|-------------------------------------------------+-----------------------+-----------+----------------------+---------------|
+| randomforestregressor__bootstrap                | [True]                | -0.000000 | NaN                  | [True]        |
+| randomforestregressor__ccp_alpha                | [0.0, 0.0001, 0.0002] | 1.097032  | [12.93, 7.52, 10.74] | [0.0, 0.0002] |
+| randomforestregressor__criterion                | [mse]                 | -0.000000 | NaN                  | [mse]         |
+| randomforestregressor__max_depth                | [None]                | -0.000000 | NaN                  | [None]        |
+| randomforestregressor__max_features             | [sqrt, 5, 2]          | 1.097032  | [14.39, 11.02, 5.78] | [sqrt, 5]     |
+| randomforestregressor__max_leaf_nodes           | [None]                | -0.000000 | NaN                  | [None]        |
+| randomforestregressor__max_samples              | [0.9]                 | -0.000000 | NaN                  | [0.9]         |
+| randomforestregressor__min_impurity_decrease    | [0.0]                 | -0.000000 | NaN                  | [0.0]         |
+| randomforestregressor__min_impurity_split       | [None]                | -0.000000 | NaN                  | [None]        |
+| randomforestregressor__min_samples_leaf         | [1]                   | -0.000000 | NaN                  | [1]           |
+| randomforestregressor__min_samples_split        | [2]                   | -0.000000 | NaN                  | [2]           |
+| randomforestregressor__min_weight_fraction_leaf | [0.0]                 | -0.000000 | NaN                  | [0.0]         |
+| randomforestregressor__n_estimators             | [50, 100, 150]        | 1.092019  | [9.76, 12.65, 8.78]  | [100]         |
+| randomforestregressor__n_jobs                   | [4]                   | -0.000000 | NaN                  | [4]           |
+| randomforestregressor__oob_score                | [True]                | -0.000000 | NaN                  | [True]        |
+| randomforestregressor__random_state             | [None]                | -0.000000 | NaN                  | [None]        |
+| randomforestregressor__verbose                  | [0]                   | -0.000000 | NaN                  | [0]           |
+| randomforestregressor__warm_start               | [False]               | -0.000000 | NaN                  | [False]       |
+:end:
+** -- Iteratively Optimize Hyperparameters
+*** 1. construct subsequent HP space
+#+begin_src jupyter-python :exports results :results raw drawer
+  grid = [
+      {'randomforestregressor__bootstrap': [True],
+       'randomforestregressor__ccp_alpha': [0.0, 0.0002],
+       'randomforestregressor__criterion': ['mse'],
+       'randomforestregressor__max_depth': [None],
+       'randomforestregressor__max_features': ['sqrt', 5],
+       'randomforestregressor__max_leaf_nodes': [None],
+       'randomforestregressor__max_samples': [0.9],
+       'randomforestregressor__min_impurity_decrease': [0.0],
+       'randomforestregressor__min_impurity_split': [None],
+       'randomforestregressor__min_samples_leaf': [1],
+       'randomforestregressor__min_samples_split': [2],
+       'randomforestregressor__min_weight_fraction_leaf': [0.0],
+       'randomforestregressor__n_estimators': [100],
+       'randomforestregressor__n_jobs': [4],
+       'randomforestregressor__oob_score': [True],
+       'randomforestregressor__random_state': [None],
+       'randomforestregressor__verbose': [0],
+       'randomforestregressor__warm_start': [False]}
+  ]
+#+end_src
+
+#+RESULTS:
+:results:
+:end:
+
+*** 2. Composition model of PBE_BG
+#+begin_src jupyter-python :exports results :results raw drawer :async yes
+  site_mse = PSA(mean_squared_error).score
+  scorings = {'r2': make_scorer(r2_score),
+                'ev': make_scorer(explained_variance_score),
+                'maxerr': make_scorer(max_error, greater_is_better=False),
+                'rmse': make_scorer(mean_squared_error, greater_is_better=False, squared=False),
+                'A_rmse': make_scorer(site_mse, greater_is_better=False,
+                                      squared=False, sample_weight=mixweight.A),
+                'B_rmse': make_scorer(site_mse, greater_is_better=False,
+                                      squared=False, sample_weight=mixweight.B),
+                'X_rmse': make_scorer(site_mse, greater_is_better=False,
+                                      squared=False, sample_weight=mixweight.X),
+                'BandX_rmse': make_scorer(site_mse, greater_is_better=False,
+                                          squared=False, sample_weight=mixweight.BandX),
+                'Pure_rmse': make_scorer(site_mse, greater_is_better=False,
+                                         squared=False, sample_weight=mixweight.pure),}
+
+  prfr = gsCV(estimator=ppipeRFR,
+              param_grid=grid,
+              cv=3, verbose=1, scoring=scorings, refit="r2", return_train_score=True)
+  prfr.fit(mp_tr, my_tr.PBE_bg_eV)
+#+end_src
+
+#+RESULTS:
+:results:
+#+begin_example
+  GridSearchCV(cv=3,
+               estimator=Pipeline(steps=[('simpleimputer',
+                                          SimpleImputer(fill_value=0.0,
+                                                        strategy='constant')),
+                                         ('standardscaler', StandardScaler()),
+                                         ('randomforestregressor',
+                                          RandomForestRegressor())]),
+               param_grid=[{'randomforestregressor__bootstrap': [True],
+                            'randomforestregressor__ccp_alpha': [0.0, 0.0001,
+                                                                 0.0002],
+                            'randomforestregressor__criterion': ['mse...
+  324    MACa0.125Pb0.875I3              2x2x2       0
+  193    MABa0.25Pb0.75I3                2x2x2       0
+  117    Rb0.125Cs0.875GeI3              2x2x2       0
+  47     CsBaCl3                         2x2x2       0
+  173    K0.375Cs0.25MA0.375SrCl3        2x2x2       0
+  Name: X, Length: 396, dtype: uint8),
+                        'ev': make_scorer(explained_variance_score),
+                        'maxerr': make_scorer(max_error, greater_is_better=False),
+                        'r2': make_scorer(r2_score),
+                        'rmse': make_scorer(mean_squared_error, greater_is_better=False, squared=False)},
+               verbose=1)
+#+end_example
+:end:
+
+*** 3. Determine next Grid Space to explore
+#+begin_src jupyter-python :exports results :results raw drawer
+  summary, next_grid = summarize_HPO(prfr, grid, topN=10, metric_weights=[1,1,1,1,1,1,1,0,1], strategy="oavg")
+  summary
+#+end_src
+
+#+RESULTS:
+:results:
+|                                                 | space_0               | entropy_0 | scores_0             | next_0        |
+|-------------------------------------------------+-----------------------+-----------+----------------------+---------------|
+| randomforestregressor__bootstrap                | [True]                | -0.000000 | NaN                  | [True]        |
+| randomforestregressor__ccp_alpha                | [0.0, 0.0001, 0.0002] | 1.097032  | [12.93, 7.52, 10.74] | [0.0, 0.0002] |
+| randomforestregressor__criterion                | [mse]                 | -0.000000 | NaN                  | [mse]         |
+| randomforestregressor__max_depth                | [None]                | -0.000000 | NaN                  | [None]        |
+| randomforestregressor__max_features             | [sqrt, 5, 2]          | 1.097032  | [14.39, 11.02, 5.78] | [sqrt, 5]     |
+| randomforestregressor__max_leaf_nodes           | [None]                | -0.000000 | NaN                  | [None]        |
+| randomforestregressor__max_samples              | [0.9]                 | -0.000000 | NaN                  | [0.9]         |
+| randomforestregressor__min_impurity_decrease    | [0.0]                 | -0.000000 | NaN                  | [0.0]         |
+| randomforestregressor__min_impurity_split       | [None]                | -0.000000 | NaN                  | [None]        |
+| randomforestregressor__min_samples_leaf         | [1]                   | -0.000000 | NaN                  | [1]           |
+| randomforestregressor__min_samples_split        | [2]                   | -0.000000 | NaN                  | [2]           |
+| randomforestregressor__min_weight_fraction_leaf | [0.0]                 | -0.000000 | NaN                  | [0.0]         |
+| randomforestregressor__n_estimators             | [50, 100, 150]        | 1.092019  | [9.76, 12.65, 8.78]  | [100]         |
+| randomforestregressor__n_jobs                   | [4]                   | -0.000000 | NaN                  | [4]           |
+| randomforestregressor__oob_score                | [True]                | -0.000000 | NaN                  | [True]        |
+| randomforestregressor__random_state             | [None]                | -0.000000 | NaN                  | [None]        |
+| randomforestregressor__verbose                  | [0]                   | -0.000000 | NaN                  | [0]           |
+| randomforestregressor__warm_start               | [False]               | -0.000000 | NaN                  | [False]       |
+:end:
+** Best Prop Model Demo
+*** Parametrize
+#+begin_src jupyter-python :exports results :results raw drawer
+  best_bg = {'normalizer__norm': ['l1'],
+             'randomforestregressor__bootstrap': [True],
+             'randomforestregressor__ccp_alpha': [0.0],
+             'randomforestregressor__criterion': ['mse'],
+             'randomforestregressor__max_depth': [None],
+             'randomforestregressor__max_features': ['auto'],
+             'randomforestregressor__max_leaf_nodes': [None],
+             'randomforestregressor__max_samples': [0.9],
+             'randomforestregressor__min_impurity_decrease': [0.0],
+             'randomforestregressor__min_impurity_split': [None],
+             'randomforestregressor__min_samples_leaf': [1],
+             'randomforestregressor__min_samples_split': [2],
+             'randomforestregressor__min_weight_fraction_leaf': [0.0],
+             'randomforestregressor__n_estimators': [150],
+             'randomforestregressor__n_jobs': [4],
+             'randomforestregressor__oob_score': [True],
+             'randomforestregressor__random_state': [None],
+             'randomforestregressor__verbose': [0],
+             'randomforestregressor__warm_start': [False]
+             }
+#+end_src
+
+#+RESULTS:
+:results:
+:end:
+
+*** Train Final Estimator
+- no CV needed
+- no train scores needed
+just fit final pipeline, predict test, score the test data, and present summary
+#+begin_src jupyter-python :exports results :results raw drawer
+  fprfr = ppipeRFR.set_params(**{k:v[0] for k,v in best_bg.items()})
+  fprfr.fit(mp_tr, my_tr.PBE_bg_eV)
+#+end_src
+
+#+RESULTS:
+:results:
+: [INFO] 2022-04-15 14:55:25 - sklearn.ensemble.RandomForestRegressor.fit: running accelerated version on CPU
+: Pipeline(steps=[('simpleimputer',
+:                  SimpleImputer(fill_value=0.0, strategy='constant')),
+:                 ('normalizer', Normalizer(norm='l1')),
+:                 ('randomforestregressor',
+:                  RandomForestRegressor(max_samples=0.9, n_estimators=150,
+:                                        n_jobs=4, oob_score=True))])
+:end:
+
+*** evaluate
+#+begin_src jupyter-python :exports results :results raw drawer
+  p = parityplot(fprfr, mp_ts, my_ts.PBE_bg_eV.to_frame(), hue="mix", aspect=1.0)
+#+end_src
+
+#+RESULTS:
+:results:
+: [INFO] 2022-04-15 14:55:58 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+: /opt/miniconda3/envs/aikit/lib/python3.9/site-packages/mplcursors/_pick_info.py:169: UserWarning: Pick support for PolyCollection is missing.
+:   warnings.warn(f"Pick support for {type(artist).__name__} is missing.")
+:end:
+  
+#+begin_src jupyter-python :exports results :results raw drawer
+  p.savefig("./rfr_bg_p.png", transparent=True)
+#+end_src
+
+#+RESULTS:
+:results:
+:end:
+
+#+begin_src jupyter-python :exports results :results raw drawer
+  pd.Series(batch_score(fprfr, mp_tr, my_tr.PBE_bg_eV, **scorings)).to_frame()
+#+end_src
+
+#+RESULTS:
+:results:
+: [INFO] 2022-04-15 14:56:57 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+: [INFO] 2022-04-15 14:56:57 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+: [INFO] 2022-04-15 14:56:57 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+: [INFO] 2022-04-15 14:56:57 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+: [INFO] 2022-04-15 14:56:57 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+: [INFO] 2022-04-15 14:56:57 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+: [INFO] 2022-04-15 14:56:57 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+: [INFO] 2022-04-15 14:56:57 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+: [INFO] 2022-04-15 14:56:57 - sklearn.ensemble.RandomForestRegressor.predict: running accelerated version on CPU
+|            | 0         |
+|------------+-----------|
+| r2         | 0.992259  |
+| ev         | 0.992299  |
+| maxerr     | -0.646760 |
+| rmse       | -0.115018 |
+| A_rmse     | -0.102947 |
+| B_rmse     | -0.136025 |
+| X_rmse     | -0.103988 |
+| BandX_rmse | -0.074854 |
+| Pure_rmse  | -0.109249 |
+:end:
+
+* comp+prop model opt
+:STATUSLOG:
+- State "NEXT"       from              [2022-04-15 Fri 15:01]
+:END:
