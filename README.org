@@ -1,6 +1,14 @@
 #+TITLE: Tutorial DS00: Machine Learning in Materials Sciences
 #+SUBTITLE: From Basic Concepts to Active Learning
 SCHEDULED: <2022-05-08 Sun 13:30-17:00>
+* Contributing
+** on local machine
+clone the repository and run:
+#+begin_example
+$ conda create -f mrg.yaml
+#+end_example
+** on nanoHUB
+working on installing the tool and environment now. link coming soon.
 * Tutorial Brief
 Methods rooted in data science, machine learning, and artificial
 intelligence have become necessary components of materials design
