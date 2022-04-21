@@ -1,0 +1,59 @@
+#+TITLE: Tutorial DS00: Machine Learning in Materials Sciences
+#+SUBTITLE: From Basic Concepts to Active Learning
+SCHEDULED: <2022-05-08 Sun 13:30-17:00>
+* Tutorial Brief
+Methods rooted in data science, machine learning, and artificial
+intelligence have become necessary components of materials design
+endeavors, being frequently applied in conjunction with both
+computational and experimental data. The now thriving field of materials
+informatics has seen the accelerated discovery of new battery materials,
+solar cell absorbers, thermoelectrics, and routes for autonomous
+synthesis and characterization. The need to educate and train the
+materials science workforce on the essential elements of machine
+learning has never been greater. This proposal aims to establish a
+recurring series of tutorials at MRS spring and fall meetings that
+introduce newcomers to all the basic concepts of machine learning in
+materials science, walking them through a few interactive examples that
+use existing datasets and ML resources.
+
+In this tutorial, there will be short overview presentations of several
+key ML concepts, following which the presenter and audience will
+together work through Python notebooks that contain easy-to-follow
+examples from the literature. The audience will likely constitute
+undergraduate and graduate students looking to get started with
+materials informatics, but the tutorial will be welcome and useful for
+any researcher. Some familiarity with writing code and making plots in
+Python would be useful.
+
+Prerequisites: Basic familiarity with Python and some data science,
+basic background do materials science and engineering / materials
+design.
+
+* Presentation Outline
+** Introduction to ML - supervised and unsupervised learning
+SCHEDULED: <2022-05-08 Sun 13:30-14:00>
+- Arun :: high-level examples of ML in materials science 
+
+** Supervised learning example
+SCHEDULED: <2022-05-08 Sun 14:00-14:45>
+- Arun :: read database, compute descriptors, csv file, descriptors,
+  train RFR regression model, nuts and bolts
+
+** Overview of neural networks
+SCHEDULED: <2022-05-08 Sun 14:45-15:15>
+- Saaketh :: deep learning with a few examples
+
+** BREAK
+SCHEDULED: <2022-05-08 Sun 15:15-15:30>
+
+** NNs for image datasets
+SCHEDULED: <2022-04-21 Thu 15:30-16:00>
+- Saaketh :: CNN for classification
+
+** Overview of active learning
+SCHEDULED: <2022-05-08 Sun 16:00-16:45>
+- Gilad or Arun+Saaketh :: Bayesian optimization / autonomous experiments / Walkthrough using a simple example
+
+** Final session
+SCHEDULED: <2022-05-08 Sun 16:45-17:00>
+general discussions, talk about best tools and resources
