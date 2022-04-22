@@ -2,12 +2,15 @@
 #+SUBTITLE: From Basic Concepts to Active Learning
 SCHEDULED: <2022-05-08 Sun 13:30-17:00>
 * Contributing
-** on local machine
+** Install Notebook Environment
 clone the repository and run:
 #+begin_example
-$ conda create -f mrg.yaml
+$ conda env create -f MRG.yaml
 #+end_example
-** on nanoHUB
+set up a notebook server and kernel as usual and proceed.
+
+notebooks are available both as ipython notebooks and as org notebooks.
+** Alternatively, use published notebook on nanoHUB
 working on installing the tool and environment now. link coming soon.
 * Tutorial Brief
 Methods rooted in data science, machine learning, and artificial

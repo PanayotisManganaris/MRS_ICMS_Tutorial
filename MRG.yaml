@@ -1,5 +1,6 @@
 name: mrg
 channels:
+  - conda-forge
   - intel
   - defaults
 dependencies:
@@ -31,10 +32,10 @@ dependencies:
   - brotli=1.0.9=hf484d3e_2
   - bzip2=1.0.8=hb9a14ef_9
   - c-ares=1.17.1=h14c3975_3
-  - ca-certificates=2021.10.26=h06a4308_2
+  - ca-certificates=2021.10.8=ha878542_0
   - cached-property=1.5.2=py_0
   - cairo=1.16.0=hf32fb01_1
-  - certifi=2021.10.8=py37h06a4308_0
+  - certifi=2021.10.8=py37h89c1867_2
   - cffi=1.14.6=py37h400218f_0
   - cfitsio=3.470=hf0d0db6_6
   - chardet=4.0.0=py37h06a4308_1003
@@ -188,6 +189,7 @@ dependencies:
   - matplotlib=3.1.2=py37ha6b9771_11
   - matplotlib-base=3.3.4=py37h62a2d02_0
   - matplotlib-inline=0.1.2=pyhd3eb1b0_2
+  - mendeleev=0.9.0=pyh8a188c0_0
   - mistune=0.8.4=py37h14c3975_1001
   - mkl=2022.0.1=intel_117
   - mkl-service=2.4.0=py37h4119f30_11
@@ -218,7 +220,7 @@ dependencies:
   - openh264=2.1.0=hd408876_0
   - openjdk=8.0.302=h7f98852_0
   - openjpeg=2.4.0=h3ad879b_0
-  - openssl=1.1.1l=h7f8727e_0
+  - openssl=1.1.1n=h7f8727e_0
   - opt_einsum=3.3.0=pyhd3eb1b0_1
   - orc=1.6.9=ha97a36c_3
   - packaging=21.0=py37h1546d3d_4
@@ -249,6 +251,7 @@ dependencies:
   - pycocotools=2.0.2=py37h5e8e339_1
   - pycparser=2.21=pyhd3eb1b0_0
   - pyeditline=2.0.1=py37_2
+  - pyfiglet=0.8.post1=py_0
   - pygments=2.11.2=pyhd3eb1b0_0
   - pymongo=3.11.4=py37h2531618_0
   - pyomniscidbe=5.7.1=py37h14b4db5_0_cpu
@@ -291,6 +294,7 @@ dependencies:
   - snappy=1.1.8=hf484d3e_4
   - sortedcontainers=2.4.0=pyhd3eb1b0_0
   - soupsieve=2.3.1=pyhd3eb1b0_0
+  - sqlalchemy=1.4.13=py37h5e8e339_0
   - sqlite=3.36.0=hb9a14ef_3
   - tbb=2021.5.0=intel_707
   - tbb4py=2021.5.0=py37_intel_707
@@ -337,7 +341,7 @@ dependencies:
   - zope.interface=5.3.0=py37h27cfd23_0
   - zstd=1.4.9=haebb681_0
   - pip:
-    - cmcl==0.1.5
-    - spyglass==0.1.2
-    - yogi==0.0.1
+    - git+https://github.com/PanayotisManganaris/cmcl.git@main#egg=cmcl
+    - git+https://github.com/PanayotisManganaris/spyglass.git@master#egg=spyglass
+    - git+https://github.com/PanayotisManganaris/yogi.git@master#egg=yogi
 prefix: /opt/miniconda3/envs/mrg
