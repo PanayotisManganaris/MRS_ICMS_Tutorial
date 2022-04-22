@@ -1,17 +1,30 @@
 #+TITLE: Tutorial DS00: Machine Learning in Materials Sciences
 #+SUBTITLE: From Basic Concepts to Active Learning
 SCHEDULED: <2022-05-08 Sun 13:30-17:00>
+
+missing libmkl_rt.so.1
+missing mplcursors from mrg.yaml
+install it now? +recreate mrg.yaml
+
 * Contributing
 ** Install Notebook Environment
 clone the repository and run:
 #+begin_example
-$ conda env create -f MRG.yaml
+$ conda env create -f mrg.yaml
 #+end_example
 set up a notebook server and kernel as usual and proceed.
 
 notebooks are available both as ipython notebooks and as org notebooks.
 ** Alternatively, use published notebook on nanoHUB
 working on installing the tool and environment now. link coming soon.
+** Manually Recreating mrg Env
+These are just notes on what worked for me once. This should not be necessary to do.
+1. conda install -c intel intel-aikit
+2. conda update scipy
+3. conda install -c intel mkl=2021.4.0
+4. pip install git+https://github.com/PanayotisManganaris/cmcl.git
+5. pip install git+https://github.com/PanayotisManganaris/yogi.git
+6. pip install git+https://github.com/PanayotisManganaris/spyglass.git
 * Tutorial Brief
 Methods rooted in data science, machine learning, and artificial
 intelligence have become necessary components of materials design
