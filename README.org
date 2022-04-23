@@ -1,11 +1,6 @@
 #+TITLE: Tutorial DS00: Machine Learning in Materials Sciences
 #+SUBTITLE: From Basic Concepts to Active Learning
 SCHEDULED: <2022-05-08 Sun 13:30-17:00>
-
-missing libmkl_rt.so.1
-missing mplcursors from mrg.yaml
-install it now? +recreate mrg.yaml
-
 * Contributing
 ** Install Notebook Environment
 clone the repository and run:
