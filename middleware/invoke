@@ -1,0 +1,8 @@
+#!/bin/sh
+
+#
+# jupyter tool
+#
+/usr/bin/invoke_app "$@" -t mrsicmstutor \
+                         -C "start_jupyter -t -T @tool visualizations.ipynb" \
+                         -u anaconda-6
