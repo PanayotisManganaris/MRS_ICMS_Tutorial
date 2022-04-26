@@ -348,7 +348,7 @@ dependencies:
   - zope.interface=5.4.0=py37h7f8727e_0
   - zstd=1.4.9=haebb681_0
   - pip:
-    - git+https://github.com/PanayotisManganaris/cmcl.git@main#egg=cmcl
-    - git+https://github.com/PanayotisManganaris/spyglass.git@master#egg=spyglass
-    - git+https://github.com/PanayotisManganaris/yogi.git@master#egg=yogi
+    - git+https://github.com/PanayotisManganaris/cmcl.git@v0.1.5#egg=cmcl
+    - git+https://github.com/PanayotisManganaris/spyglass.git@v0.1.2#egg=spyglass
+    - git+https://github.com/PanayotisManganaris/yogi.git@v0.1.0#egg=yogi
 prefix: /opt/miniconda3/envs/mrg
