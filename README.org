@@ -10,8 +10,16 @@ $ conda env create -f mrg.yaml
 set up a notebook server and kernel as usual and proceed.
 
 notebooks are available both as ipython notebooks and as org notebooks.
-** Alternatively, use published notebook on nanoHUB
-working on installing the tool and environment now. link coming soon.
+** Alternatively, use Development Environment on Nanohub
+1. navigate to https://nanohub.org/tools/jupyter70/
+2. start a terminal and clone the respository.
+3. use the nanoHUB jupyter browser to start the mrsicms kernel from the "new" dropdown menu on the right.
+4. develop in a notebook online
+*** Note on using a jupyter REPL
+in order to access the kernel through an interactive shell:
+1. start an in-browser terminal (does not work through ssh)
+2. $ use -e anaconda-7
+3. $ jupyter console --existing
 ** Manually Recreating mrg Env
 These are just notes on what worked for me once. This should not be necessary to do.
 1. conda install -c intel intel-aikit

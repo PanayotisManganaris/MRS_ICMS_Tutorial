@@ -1,0 +1,55 @@
+#+TITLE: Optimizing RFR Models based on Perovskite Compositions
+#+AUTHOR: Panayotis Manganaris
+#+EMAIL: pmangana@purdue.edu
+#+PROPERTY: header-args :session aikit :kernel mrg :async yes :pandoc org
+* dependencies
+#+begin_src jupyter-python :exports results :results raw drawer
+  # featurization
+  import cmcl
+  from cmcl import Categories
+#+end_src
+* load data
+loading stored targets and reference material
+#+begin_src jupyter-python :exports results :results raw drawer
+  my = pd.read_csv("./mannodi_data.csv").set_index(["index", "Formula", "sim_cell"])
+  lookup = pd.read_csv("./constituent_properties.csv").set_index("Formula")
+#+end_src
+* compute features
+ft.comp() is a pandas DataFrame function of the "ft" (feature)
+accessor that extracts composition vectors from the formula string in
+a dataframe (or dataframe index).
+
+This is provided by cmcl
+
+the abx function of the collect accessor is a convenince function for
+grouping the resulting compostion table by a hidden list of site
+membership
+#+begin_src jupyter-python :exports results :results raw drawer
+  mc = my.ft.comp() # compute numerical compostion vectors from strings
+  mc = mc.collect.abx() # convenient site groupings for perovskites data
+#+end_src
+this can be used with the logif tool in catagories to quickly
+catagorize records by their mix status. that status is assigned to the
+index for further reference
+#+begin_src jupyter-python :exports results :results raw drawer
+  mixlog = mc.groupby(level=0, axis=1).count()
+  mix = mixlog.pipe(Categories.logif, condition=lambda x: x>1, default="pure", catstring="and")
+  mc = mc.assign(mix=mix).set_index("mix", append=True)
+  my = my.assign(mix=mix).set_index("mix", append=True)
+#+end_src
+
+with an extra call the derive_from function the site-averaged properties are
+computed
+
+It wraps an N-to-N join with weighted averaging of any resulting
+redundant entries and reshapes the results to be consistent with the
+outermost indices of the accessed dataframe
+
+#+begin_src jupyter-python :exports results :results raw drawer
+  mp = mc.ft.derive_from(lookup, "element", "Formula")
+#+end_src
+
+from here, the compostion descriptors (mc) and the site-averaged
+properties descriptors (mp) are ready for use in modeling
+
+"my" contains all the targets that might be of interest.
