@@ -1,0 +1,93 @@
+#+TITLE: Visualizing Perovskite Dataset
+#+AUTHOR: Panayotis Manganaris
+#+EMAIL: pmangana@purdue.edu
+#+PROPERTY: header-args :session aikit :kernel mrg :async yes :pandoc org
+* dependencies
+#+begin_src jupyter-python :exports results :results raw drawer
+  # featurization
+  import cmcl
+  from cmcl import Categories
+#+end_src
+  
+#+begin_src jupyter-python :exports results :results raw drawer
+  # data tools
+  import pandas as pd
+  import numpy as np
+  # visualization
+  import matplotlib.pyplot as plt
+  import seaborn as sns
+#+end_src
+
+* load data
+loading stored targets and reference material
+#+begin_src jupyter-python :exports results :results raw drawer
+  my = pd.read_csv("./mannodi_data.csv").set_index(["index", "Formula", "sim_cell"])
+  lookup = pd.read_csv("./constituent_properties.csv").set_index("Formula")
+#+end_src
+* compute features
+cmcl provides an "ft" (feature) pandas DataFrame accessor. This
+accessor exposes batch feature extraction tools. The function ft.comp
+extracts composition vectors from the formula string in a dataframe
+(or dataframe index).
+
+The abx function of the collect accessor is a convenience function for
+grouping the resulting composition constituents by site membership
+#+begin_src jupyter-python :exports results :results raw drawer
+  mc = my.ft.comp() # compute numerical compostion vectors from strings
+  mc = mc.collect.abx() # convenient site groupings for perovskites data
+#+end_src
+this can be used with the logif tool in categories to quickly
+categorize records by their mix status. that status is assigned to the
+index of the respective tables for further reference
+#+begin_src jupyter-python :exports results :results raw drawer
+  mixlog = mc.groupby(level=0, axis=1).count()
+  mix = mixlog.pipe(Categories.logif, condition=lambda x: x>1, default="pure", catstring="and")
+  mc = mc.assign(mix=mix).set_index("mix", append=True)
+  my = my.assign(mix=mix).set_index("mix", append=True)
+#+end_src
+
+The derive_from function can be used to compute the site-averaged
+properties of each record.
+
+It performs a three-way N-to-N table join, performs a weighted
+averaging of any resulting redundant entries, and finally reshapes the
+results to be consistent with the outermost indices of the accessed
+data frame. Hence to obtain the site averaged properties, the
+composition table column labels must be grouped first, as above.
+
+#+begin_src jupyter-python :exports results :results raw drawer
+  mp = mc.ft.derive_from(lookup, "element", "Formula")
+#+end_src
+
+* Target Visualizations
+The main target of interest in this exercise is the Perovskite band gap.
+#+begin_src jupyter-python :exports results :results raw drawer
+  
+#+end_src
+
+* Univariate Visualizations
+** KDE
+composition vectors are central to the feature sets currently under
+investigation.
+
+Here, their univariate distributions are explored by Kernel Density
+Estimation with respect to alloy class.
+
+#+begin_src jupyter-python :exports results :results raw drawer
+  plotcomp = df.ft.comp().loc[:498:].dropna(how="all", axis=1)
+  comp_kde = pd.melt(
+      pd.DataFrame(
+          plotcomp.fillna(0).pipe(Normalizer(norm="l1").fit_transform),
+          columns=plotcomp.columns,
+          index=plotcomp.index).assign(mix=mix),
+      id_vars="mix")
+#+end_src
+
+#+begin_src jupyter-python :exports results :results raw drawer
+  with sns.plotting_context("poster"):
+      p = sns.FacetGrid(comp_kde[comp_kde.mix!="BandX"], col="variable", col_order=["Ba", "Ge", "Cl", "Br", "I", "Sn", "Pb", "Cs", "FA", "MA", "Sr", "Ca", "Rb", "K"], col_wrap=5, hue="mix")
+      p.map(sns.kdeplot, "value", shade=True)
+      p.add_legend()
+      sns.move_legend(p, "upper left", bbox_to_anchor=(.80, .25))
+#+end_src
+
