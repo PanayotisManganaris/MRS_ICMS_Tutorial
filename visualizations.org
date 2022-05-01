@@ -174,10 +174,9 @@ Then, if any exist, they will be plotted in detail.
   p.figure.show()
 #+end_src
 
-#+RESULTS:
-:results:
-: /opt/miniconda3/envs/mrg/lib/python3.7/site-packages/ipykernel_launcher.py:9: UserWarning: Matplotlib is currently using module://matplotlib_inline.backend_inline, which is a non-GUI backend, so cannot show the figure.
-:   if __name__ == '__main__':
-#+attr_org: :width 685
-[[file:./.ob-jupyter/abc0fb650fc2d453496e50a2608ebfec3caf800b.png]]
-:end:
+** correlated axes
+* Multivariate relations
+unsurprisingly no simple explanations exist. to get a better idea of
+what structures statistical models might be able to find in the
+complete dataset, the structure and effects of many variables at a
+time must be inspected.
