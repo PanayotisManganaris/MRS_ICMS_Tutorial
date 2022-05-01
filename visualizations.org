@@ -138,3 +138,34 @@ ratios are explored with respect to the alloy class.
   with sns.plotting_context("notebook"):
       p = sns.displot(x="value", col=smp.iloc[:,2], row="site", data=smp, kind="hist", hue="mix", multiple='stack')
 #+end_src
+* Bi-variate relations
+it is unlikely that any of the targets is full explained by a single
+composition or composition derived axis. But there are probably
+relations.
+
+A Pearson correlation map will be produced to check for strong
+relations.
+
+Then, if any exist, they will be plotted in detail.
+
+** PBE properties vs composition
+#+begin_src jupyter-python :exports results :results raw drawer
+  mc_v_targets = pd.concat([my, mc], axis=1).select_dtypes(np.number).fillna(0)
+  pearson = pd.DataFrame(np.corrcoef(mc_v_targets, rowvar=False),
+                         columns=mc_v_targets.columns,
+                         index=mc_v_targets.columns)
+  subset = pearson.filter(regex=r"HSE|dielc", axis=0).filter(regex=r"^(PBE|diel|SLME|HSE)")
+  p = sns.heatmap(subset, vmax=1.0, vmin=-1.0, cmap="seismic")
+  p.set_xticklabels(p.get_xticklabels(), rotation=45, horizontalalignment='right')
+  p.figure.show()
+#+end_src
+
+#+RESULTS:
+:results:
+: /opt/miniconda3/envs/mrg/lib/python3.7/site-packages/ipykernel_launcher.py:8: UserWarning: Matplotlib is currently using module://matplotlib_inline.backend_inline, which is a non-GUI backend, so cannot show the figure.
+:   
+#+attr_org: :width 687
+[[file:./.ob-jupyter/66dbc2b5707f84cd68b0ef36624422870f7e0110.png]]
+:end:
+
+** PBE properties
