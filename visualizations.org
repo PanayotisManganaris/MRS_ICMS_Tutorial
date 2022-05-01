@@ -148,7 +148,7 @@ relations.
 
 Then, if any exist, they will be plotted in detail.
 
-** PBE properties vs composition
+** targets vs composition
 #+begin_src jupyter-python :exports results :results raw drawer
   mc_v_targets = pd.concat([my, mc], axis=1).select_dtypes(np.number).fillna(0)
   pearson = pd.DataFrame(np.corrcoef(mc_v_targets, rowvar=False),
@@ -161,12 +161,23 @@ Then, if any exist, they will be plotted in detail.
   p.figure.show()
 #+end_src
 
+** targets vs site-averaged properties
+#+begin_src jupyter-python :exports results :results raw drawer
+  mp_v_targets = pd.concat([my, mp], axis=1).select_dtypes(np.number).fillna(0)
+  pearson = pd.DataFrame(np.corrcoef(mp_v_targets, rowvar=False),
+                         columns=mp_v_targets.columns,
+                         index=mp_v_targets.columns)
+  subset = pearson.filter(regex=r"PBE|dielc|SLME", axis=0).filter(regex=r"^(?!PBE|HSE|SLME|dielc|PV_FOM)")
+  #first filter picks targets, second selects bases
+  p = sns.heatmap(subset, vmax=1.0, vmin=-1.0, cmap="seismic")
+  p.set_xticklabels(p.get_xticklabels(), rotation=45, horizontalalignment='right')
+  p.figure.show()
+#+end_src
+
 #+RESULTS:
 :results:
-: /opt/miniconda3/envs/mrg/lib/python3.7/site-packages/ipykernel_launcher.py:8: UserWarning: Matplotlib is currently using module://matplotlib_inline.backend_inline, which is a non-GUI backend, so cannot show the figure.
-:   
+: /opt/miniconda3/envs/mrg/lib/python3.7/site-packages/ipykernel_launcher.py:9: UserWarning: Matplotlib is currently using module://matplotlib_inline.backend_inline, which is a non-GUI backend, so cannot show the figure.
+:   if __name__ == '__main__':
 #+attr_org: :width 685
-[[file:./.ob-jupyter/5a34f01a35533a578c7ff853464a60fa8830e97c.png]]
+[[file:./.ob-jupyter/abc0fb650fc2d453496e50a2608ebfec3caf800b.png]]
 :end:
-
-** PBE properties
