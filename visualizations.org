@@ -154,7 +154,8 @@ Then, if any exist, they will be plotted in detail.
   pearson = pd.DataFrame(np.corrcoef(mc_v_targets, rowvar=False),
                          columns=mc_v_targets.columns,
                          index=mc_v_targets.columns)
-  subset = pearson.filter(regex=r"HSE|dielc", axis=0).filter(regex=r"^(PBE|diel|SLME|HSE)")
+  subset = pearson.filter(regex=r"PBE|dielc|SLME", axis=0).filter(regex=r"^(?!PBE|HSE|SLME|dielc|PV_FOM)")
+  #first filter picks targets, second selects bases
   p = sns.heatmap(subset, vmax=1.0, vmin=-1.0, cmap="seismic")
   p.set_xticklabels(p.get_xticklabels(), rotation=45, horizontalalignment='right')
   p.figure.show()
@@ -164,8 +165,8 @@ Then, if any exist, they will be plotted in detail.
 :results:
 : /opt/miniconda3/envs/mrg/lib/python3.7/site-packages/ipykernel_launcher.py:8: UserWarning: Matplotlib is currently using module://matplotlib_inline.backend_inline, which is a non-GUI backend, so cannot show the figure.
 :   
-#+attr_org: :width 687
-[[file:./.ob-jupyter/66dbc2b5707f84cd68b0ef36624422870f7e0110.png]]
+#+attr_org: :width 685
+[[file:./.ob-jupyter/5a34f01a35533a578c7ff853464a60fa8830e97c.png]]
 :end:
 
 ** PBE properties
