@@ -6,4 +6,4 @@
 /usr/bin/invoke_app "$@" -t mrsicmsnotes \
 		         -r none \
                          -C "/apps/share64/debian10/anaconda/anaconda-7/bin/start_jupyter -t -T @tool visualizations.ipynb" \
-                         -u anaconda-7 #should just start with mrsicms kernel
+                         -u anaconda-6 #should just start with mrsicms kernel
