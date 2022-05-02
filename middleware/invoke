@@ -4,5 +4,6 @@
 # jupyter tool
 #
 /usr/bin/invoke_app "$@" -t mrsicmsnotes \
+		         -r none \
                          -C "start_jupyter -t -T @tool visualizations.ipynb" \
-                         -u anaconda-6 #should just start with mrsicms kernel
+                         -u anaconda-7 #should just start with mrsicms kernel
