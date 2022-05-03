@@ -2,6 +2,8 @@
 #+AUTHOR: Panayotis Manganaris
 #+EMAIL: pmangana@purdue.edu
 #+PROPERTY: header-args :session aikit :kernel mrg :async yes :pandoc org
+* Instruction
+To run these cell you must activate the python3 (mrsicms) kernel from the "Kernel" drop-down in the toolbar.
 * dependencies
 #+begin_src jupyter-python :exports results :results raw drawer
   # featurization
