@@ -7,7 +7,7 @@ https://nanohub.org/tools/mrsicmsnotes/
 ** Install Notebook Environment
 clone the repository and run:
 #+begin_example
-$ conda env create -f mrg.yaml
+$ conda env create -f mrsicms.yaml
 #+end_example
 set up a notebook server and kernel as usual and proceed.
 

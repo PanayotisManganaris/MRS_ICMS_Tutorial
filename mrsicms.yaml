@@ -8,13 +8,17 @@ dependencies:
   - _py-xgboost-mutex=2.0=cpu_0
   - abseil-cpp=20210324.2=h2531618_0
   - absl-py=0.15.0=pyhd3eb1b0_0
+  - aiohttp=3.8.1=py37h7f8727e_1
   - aioredis=1.3.1=pyhd3eb1b0_0
+  - aiosignal=1.2.0=pyhd3eb1b0_0
   - argon2-cffi=21.3.0=pyhd3eb1b0_0
   - argon2-cffi-bindings=21.2.0=py37h7f8727e_0
   - arrow-cpp=3.0.0=py37h6b21186_4
+  - asn1crypto=1.4.0=py37hcd5400e_2
   - astor=0.8.1=py37h06a4308_0
   - astunparse=1.6.3=py_0
   - async-timeout=4.0.1=pyhd3eb1b0_0
+  - asynctest=0.13.0=py_0
   - attrs=21.4.0=pyhd3eb1b0_0
   - aws-c-common=0.4.57=he6710b0_1
   - aws-c-event-stream=0.1.6=h2531618_5
@@ -27,6 +31,7 @@ dependencies:
   - binutils_linux-64=2.33.1=h9595d00_15
   - blas=1.0=openblas
   - bleach=4.1.0=pyhd3eb1b0_0
+  - blinker=1.4=py37h06a4308_0
   - blosc=1.21.0=h8c45485_0
   - bokeh=2.3.3=py37h06a4308_0
   - boost-cpp=1.73.0=h27cfd23_11
@@ -37,16 +42,18 @@ dependencies:
   - c-ares=1.18.1=h7f8727e_0
   - ca-certificates=2021.10.26=h06a4308_2
   - cached-property=1.5.2=py_0
+  - cachetools=4.2.2=pyhd3eb1b0_0
   - cairo=1.16.0=hf32fb01_1
   - certifi=2021.10.8=py37h06a4308_0
   - cffi=1.15.0=py37hd667e15_1
   - cfitsio=3.470=hf0d0db6_6
   - chardet=4.0.0=py37h06a4308_1003
+  - charset-normalizer=2.0.4=pyhd3eb1b0_0
   - click=8.0.4=py37h06a4308_0
   - cloudpickle=2.0.0=pyhd3eb1b0_0
   - colorama=0.4.4=pyhd3eb1b0_0
   - contextlib2=0.5.5=py37_0
-  - cryptography=36.0.0=py37h9ce1e76_0
+  - cryptography=3.3.2=py37h3d3d174_1
   - curl=7.82.0=h7f8727e_0
   - cycler=0.11.0=pyhd3eb1b0_0
   - cyrus-sasl=2.1.27=h758a394_8
@@ -78,6 +85,7 @@ dependencies:
   - fonttools=4.25.0=pyhd3eb1b0_0
   - freetype=2.11.0=h70c0345_0
   - freexl=1.0.6=h27cfd23_0
+  - frozenlist=1.2.0=py37h7f8727e_0
   - fsspec=2022.2.0=pyhd3eb1b0_0
   - future=0.18.2=py37_1
   - gast=0.2.2=py37_0
@@ -93,6 +101,8 @@ dependencies:
   - glog=0.5.0=h2531618_0
   - gmp=6.2.1=h2531618_2
   - gnutls=3.6.15=he1e5248_0
+  - google-auth=1.33.0=pyhd3eb1b0_0
+  - google-auth-oauthlib=0.4.1=py_2
   - google-pasta=0.2.0=pyhd3eb1b0_0
   - greenlet=1.1.1=py37h295c915_0
   - grpc-cpp=1.39.0=hae934f6_5
@@ -197,6 +207,7 @@ dependencies:
   - locket=0.2.1=py37h06a4308_2
   - lpot=1.5.1=pyhdless_1
   - lz4-c=1.9.3=h295c915_1
+  - markdown=3.3.4=py37h06a4308_0
   - markupsafe=2.0.1=py37h27cfd23_0
   - matplotlib-base=3.5.1=py37ha18d171_1
   - matplotlib-inline=0.1.2=pyhd3eb1b0_2
@@ -215,6 +226,7 @@ dependencies:
   - mpi4py=3.0.3=py37hf046da1_1
   - mpich=3.3.2=hc856adb_0
   - msgpack-python=1.0.2=py37hff7bd54_1
+  - multidict=5.1.0=py37h27cfd23_2
   - munkres=1.1.4=py_0
   - nbclient=0.5.13=py37h06a4308_0
   - nbconvert=6.4.4=py37h06a4308_0
@@ -225,6 +237,8 @@ dependencies:
   - networkx=2.2=py37_1
   - notebook=6.4.8=py37h06a4308_0
   - numexpr=2.8.1=py37hecfb737_0
+  - numpy-base=1.19.2=py37h591eb60_0
+  - oauthlib=3.1.1=pyhd3eb1b0_0
   - omniscidb-common=5.7.1=hfd7591c_0
   - omniscidbe=5.7.1=h7185ff3_0_cpu
   - opencv-python-headless=4.5.4.58=py39_0
@@ -259,13 +273,16 @@ dependencies:
   - py-cpuinfo=8.0.0=pyhd3eb1b0_1
   - py-xgboost=1.5.0=py37h06a4308_1
   - pyarrow=3.0.0=py37he0739d4_3
+  - pyasn1=0.4.8=py_0
+  - pyasn1-modules=0.2.8=py_0
   - pycocotools=2.0.2=py37h5e8e339_1
   - pycparser=2.21=pyhd3eb1b0_0
   - pyeditline=2.0.1=py37_2
   - pygments=2.11.2=pyhd3eb1b0_0
+  - pyjwt=2.1.0=pyhd8ed1ab_0
   - pymongo=3.12.0=py37h295c915_0
   - pyomniscidbe=5.7.1=py37h14b4db5_0_cpu
-  - pyopenssl=22.0.0=pyhd3eb1b0_0
+  - pyopenssl=21.0.0=pyhd3eb1b0_1
   - pyparsing=3.0.4=pyhd3eb1b0_0
   - pyqt=5.9.2=py37h05f1152_2
   - pyrsistent=0.18.0=py37heee7806_0
@@ -289,6 +306,8 @@ dependencies:
   - readline=8.1.2=h7f8727e_1
   - redis-py=3.5.3=pyhd3eb1b0_0
   - requests=2.25.1=py37h6282448_1
+  - requests-oauthlib=1.3.0=py_0
+  - rsa=4.7.2=pyhd3eb1b0_1
   - schema=0.7.4=pyh44b312d_0
   - scikit-ipp=1.2.0=py37h2d01023_8
   - scikit-learn=1.0.2=py37h51133e4_1
@@ -307,6 +326,9 @@ dependencies:
   - tbb=2021.5.0=hd09550d_0
   - tbb4py=2021.5.0=py37hd09550d_0
   - tblib=1.7.0=pyhd3eb1b0_0
+  - tensorboard=2.6.0=py_1
+  - tensorboard-data-server=0.6.0=py37hca6d32c_0
+  - tensorboard-plugin-wit=1.6.0=py_0
   - tensorflow=2.7.0=py37_1
   - tensorflow-estimator=2.7.0=py_0
   - termcolor=1.1.0=py37h06a4308_1
@@ -339,6 +361,7 @@ dependencies:
   - xgboost=1.5.0=py37h06a4308_1
   - xz=5.2.5=h7b6447c_0
   - yaml=0.2.5=h7b6447c_0
+  - yarl=1.6.3=py37h27cfd23_0
   - zeromq=4.3.4=h2531618_0
   - zict=2.0.0=pyhd3eb1b0_0
   - zipp=3.7.0=pyhd3eb1b0_0
@@ -348,7 +371,14 @@ dependencies:
   - zope.interface=5.4.0=py37h7f8727e_0
   - zstd=1.4.9=haebb681_0
   - pip:
-    - git+https://github.com/PanayotisManganaris/cmcl.git@v0.1.5#egg=cmcl
-    - git+https://github.com/PanayotisManganaris/spyglass.git@v0.1.2#egg=spyglass
-    - git+https://github.com/PanayotisManganaris/yogi.git@v0.1.0#egg=yogi
+    - cmcl==0.1.5
+    - mendeleev==0.9.0
+    - mplcursors==0.5.1
+    - numpy==1.21.6
+    - pyfiglet==0.8.post1
+    - seaborn==0.11.2
+    - spyglass==0.1.2
+    - sqlalchemy==1.4.35
+    - unidecode==1.3.4
+    - yogi==0.0.1
 prefix: /opt/miniconda3/envs/mrg
