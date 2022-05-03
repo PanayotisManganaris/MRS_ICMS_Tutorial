@@ -25,7 +25,6 @@ cell before importing the algorithms
   
 #+begin_src jupyter-python :exports results :results raw drawer
   # data tools
-  import sqlite3
   import pandas as pd
   import numpy as np
   # feature engineering
@@ -777,8 +776,8 @@ using the 4 fold cross validation established by the LC analysis
 #+end_src
 
 The RFR designed here scores consistently well with the test data,
-However, parity visual could indicate nonetheless show possible
-over fitting to the training data if the spread is not consistent.
+However, parity visual could show possible over-fitting to the
+training data if the spread is not consistent.
 
 ** Obtain Generality Measure
 #+begin_src jupyter-python :exports results :results raw drawer
