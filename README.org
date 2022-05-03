@@ -28,7 +28,7 @@ These are just notes on what worked for me once. This should not be necessary to
 4. pip install git+https://github.com/PanayotisManganaris/cmcl.git
 5. pip install git+https://github.com/PanayotisManganaris/yogi.git
 6. pip install git+https://github.com/PanayotisManganaris/spyglass.git
-* Tutorial Brief
+* Proposal
 Methods rooted in data science, machine learning, and artificial
 intelligence have become necessary components of materials design
 endeavors, being frequently applied in conjunction with both
@@ -55,7 +55,6 @@ Python would be useful.
 Prerequisites: Basic familiarity with Python and some data science,
 basic background do materials science and engineering / materials
 design.
-
 * Presentation Outline
 ** Introduction to ML - supervised and unsupervised learning
 SCHEDULED: <2022-05-08 Sun 13:30-14:00>
@@ -84,3 +83,15 @@ SCHEDULED: <2022-05-08 Sun 16:00-16:45>
 ** Final session
 SCHEDULED: <2022-05-08 Sun 16:45-17:00>
 general discussions, talk about best tools and resources
+* v1.0 "abstract" description (adapted from proposal)
+These notebooks are the first in a series of tutorials planned for
+recurring workshops hosted at the MRS spring and fall meetings. It
+aims to introduces newcomers to an example of rigorous model
+engineering. This is done by interactively guiding users through the
+task of creating models of semiconductor band gaps using a subset of
+the Mannodi Research Group's computational cubic Perovskites dataset.
+** References
+Mannodi-Kanakkithodi, A., & Chan, M. K. Y. (2021). Data-driven design
+of novel halide perovskite alloys. Energy and Environmental Science,
+(), . http://dx.doi.org/10.1039/D1EE02971A
+
