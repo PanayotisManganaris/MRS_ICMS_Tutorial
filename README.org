@@ -1,6 +1,8 @@
 #+TITLE: Tutorial DS00: Machine Learning in Materials Sciences
 #+SUBTITLE: From Basic Concepts to Active Learning
 SCHEDULED: <2022-05-08 Sun 13:30-17:00>
+* Live On nanoHUB
+https://nanohub.org/tools/mrsicmsnotes/
 * Contributing
 ** Install Notebook Environment
 clone the repository and run:
