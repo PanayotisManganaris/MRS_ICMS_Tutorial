@@ -4,6 +4,10 @@ SCHEDULED: <2022-05-08 Sun 13:30-17:00>
 * Live On nanoHUB
 https://nanohub.org/tools/mrsicmsnotes/
 * Contributing
+** guidelines
+1. nanoHUB jupyter tools are run on a READ ONLY filesystem. Do not
+   perform actual disk IO from a published notebook.
+2. one day I'll turn this into a dev guide for nanohub....
 ** Install Notebook Environment
 clone the repository and run:
 #+begin_example
@@ -34,6 +38,7 @@ These are just notes on what worked for me once. This should not be necessary to
 4. pip install git+https://github.com/PanayotisManganaris/cmcl.git
 5. pip install git+https://github.com/PanayotisManganaris/yogi.git
 6. pip install git+https://github.com/PanayotisManganaris/spyglass.git
+7. conda install -c intel tensorboard
 * Proposal
 Methods rooted in data science, machine learning, and artificial
 intelligence have become necessary components of materials design
