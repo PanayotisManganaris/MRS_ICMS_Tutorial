@@ -11,11 +11,15 @@ $ conda env create -f mrsicms.yaml
 #+end_example
 set up a notebook server and kernel as usual and proceed.
 
-notebooks are available both as ipython notebooks and as org notebooks.
+This is an abridged, tutorial version of the model development
+performed for publication at (citation to be generated)
+
+These notebooks are available only as ipython notebooks. The complete
+notebook are also available in org markup language.
 ** Alternatively, use Development Environment on Nanohub
 1. navigate to https://nanohub.org/tools/jupyter70/
-2. start a terminal and clone the respository.
-3. use the nanoHUB jupyter browser to start the mrsicms kernel from the "new" dropdown menu on the right.
+2. start a terminal and clone the repository.
+3. use the nanoHUB jupyter browser to start the mrsicms kernel from the "new" drop-down menu on the right.
 4. develop in a notebook online
 *** Note on using a jupyter REPL
 in order to access the kernel through an interactive shell:
