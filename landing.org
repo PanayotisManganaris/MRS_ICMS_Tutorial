@@ -76,4 +76,4 @@ network is demonstrated.
 Come to the next Fall MRS meeting for a walk-through applying these
 models to material structures, maybe.
 
-[[file:./image_based_classification_keras.ipynb][MNIST fashion dataset classification cNN]]
+[[file:./image_classification_tutor.ipynb][MNIST fashion dataset classification cNN]]
