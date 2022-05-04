@@ -1,0 +1,79 @@
+#+TITLE: MRS Data Driven Materials Design Tutorial
+#+AUTHOR: Panayotis Manganaris
+#+EMAIL: pmangana@purdue.edu
+#+PROPERTY: header-args :session aikit :kernel mrg :async yes :pandoc org
+* Welcome
+The following notebooks will introduce you to an example of rigorously
+developing a simple surrogate model of Perovskite band gaps for use in
+an inverse design framework.
+
+The notebooks contain code cell interspersed with explanations of the
+engineering design process.
+
+The dataset used is a subset of the Mannodi Research Group's
+computational cubic Perovskites data base.
+
+* Exploratory Data Analysis with Seaborg
+Walk-through to visualizing many-dimensional data spaces
+
+novel steps:
+- load data
+- featurize data
+- identify links between subspaces
+- set modeling objectives
+- use unsupervised learning to help intuit more complex multivariate relationships
+
+[[file:./visualizations.ipynb][Exploratory Data Analysis]]
+
+* Simple Linear Model
+Linear models are capable of offering clear intuitive explanations of
+multivariate relationships, but they are often not flexible enough to
+act as surrogates in active learning strategies. Nevertheless, it's
+good to check.
+
+novel steps:
+- follow good data hygiene
+- construct machine learning pipelines
+- evaluate model
+
+* Rigorous Hyper-parameter optimization in Random Forest Regression
+This data requires a model capable of accurately extrapolating from
+the relations between certain simple alloys and their properties to
+the relations between arbitrary alloys and their properties.
+
+novel steps:
+- use multiple kinds of cross validation to evaluate model performance in development stages
+- coerce simple architecture to prioritize extrapolating between subsets of relations
+- assemble multi objective scoring schemes compliant with sklearn workflows to aid in model selection
+- perform hyper-parameter optimization and sensitivity analysis
+
+[[file:./RFR_opt_bg.ipynb][Hyper Parameter Optimization Example]]
+
+* Neural Network Regression
+RFRs are extremely simple models. While highly flexible, their ability
+to learn underlying trends are limited to simple, relatively high bias
+targets.
+
+Neural Networks are capable of learning any function. However, their
+hyper parameters are more fundamental to their structure and are harder
+to optimize.
+
+novel steps:
+- creating a neural network estimator using tensorflow.
+
+[[file:./NN_bg.ipynb][Multilayer Neural Network regressor with TensorFlow Example]]
+
+* Neural Network Classification
+The Mannodi dataset discussed here is constrained to cubic
+structures. Learning to extrapolate to other kinds of structures will
+require models that are capable of processing data in the form of
+graph structures.
+
+Images are exceedingly simple graph structures. So, in lieu of
+variable structure graphs, a simple image classification neural
+network is demonstrated.
+
+Come to the next Fall MRS meeting for a walk-through applying these
+models to material structures, maybe.
+
+[[file:./image_based_classification_keras.ipynb][MNIST fashion dataset classification cNN]]

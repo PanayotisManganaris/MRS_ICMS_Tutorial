@@ -5,5 +5,5 @@
 #
 /usr/bin/invoke_app "$@" -t mrsicmsnotes \
 		         -r none \
-                         -C "start_jupyter -t -T @tool visualizations.ipynb" \
+                         -C "start_jupyter -t -T @tool landing.ipynb" \
                          -u anaconda-7
