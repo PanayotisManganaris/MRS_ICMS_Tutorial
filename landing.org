@@ -13,7 +13,7 @@ engineering design process.
 The dataset used is a subset of the Mannodi Research Group's
 computational cubic Perovskites data base.
 
-* Exploratory Data Analysis with Seaborg
+* Exploratory Data Analysis with Seaborn
 Walk-through to visualizing many-dimensional data spaces
 
 novel steps:
@@ -36,16 +36,18 @@ novel steps:
 - construct machine learning pipelines
 - evaluate model
 
+[[file:./Linear_bg_tutor.ipynb][Regression Example: Ordinary Least Squares and ElasticNet]]
+
 * Rigorous Hyper-parameter optimization in Random Forest Regression
 This data requires a model capable of accurately extrapolating from
 the relations between certain simple alloys and their properties to
 the relations between arbitrary alloys and their properties.
 
 novel steps:
-- use multiple kinds of cross validation to evaluate model performance in development stages
-- coerce simple architecture to prioritize extrapolating between subsets of relations
 - assemble multi objective scoring schemes compliant with sklearn workflows to aid in model selection
 - perform hyper-parameter optimization and sensitivity analysis
+- use multiple kinds of cross validation to evaluate model performance in hyperparameter optimization
+- coerce simple architecture to prioritize extrapolating between subsets of relations
 
 [[file:./RFR_opt_bg_tutor.ipynb][Regression Example: Random Forest with Hyper Parameter Optimization]]
 
