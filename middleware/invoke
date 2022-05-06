@@ -4,6 +4,7 @@
 # jupyter tool
 #
 /usr/bin/invoke_app "$@" -t mrsicmsnotes \
+		         -e NUMEXPR_MAX_THREADS=4
 		         -r none \
                          -C "start_jupyter -t -T @tool landing.ipynb" \
                          -u anaconda-7
